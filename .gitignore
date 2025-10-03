@@ -17,3 +17,5 @@ docs/*
 mock_*
 
 .DS_Store
+
+.env

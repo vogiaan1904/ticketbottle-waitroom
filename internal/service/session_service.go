@@ -7,111 +7,117 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/yourusername/waitroom-service/internal/domain"
-	"github.com/yourusername/waitroom-service/internal/repository"
-	"github.com/yourusername/waitroom-service/pkg/config"
-	"github.com/yourusername/waitroom-service/pkg/logger"
+	"github.com/vogiaan1904/ticketbottle-waitroom/config"
+	"github.com/vogiaan1904/ticketbottle-waitroom/internal/errors"
+	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
+	repo "github.com/vogiaan1904/ticketbottle-waitroom/internal/repository/redis"
+	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
 )
 
+type SessionService interface {
+	CreateSession(ctx context.Context, uID, eID string, userAgent, ipAddr string) (*models.Session, error)
+	GetSession(ctx context.Context, ssID string) (*models.Session, error)
+	GenerateCheckoutToken(ctx context.Context, ss *models.Session) (string, error)
+	ValidateSession(ctx context.Context, ssID string) error
+}
+
 type sessionService struct {
-	repo   repository.SessionRepository
-	config config.JWTConfig
-	logger logger.Logger
+	repo repo.SessionRepository
+	conf config.JWTConfig
+	l    logger.Logger
 }
 
 func NewSessionService(
-	repo repository.SessionRepository,
-	config config.JWTConfig,
-	logger logger.Logger,
+	repo repo.SessionRepository,
+	conf config.JWTConfig,
+	l logger.Logger,
 ) SessionService {
 	return &sessionService{
-		repo:   repo,
-		config: config,
-		logger: logger,
+		repo: repo,
+		conf: conf,
+		l:    l,
 	}
 }
 
-func (s *sessionService) CreateSession(ctx context.Context, userID, eventID string, priority int, userAgent, ipAddress string) (*domain.Session, error) {
+func (s *sessionService) CreateSession(ctx context.Context, uID, eID string, userAgent, ipAddr string) (*models.Session, error) {
 	now := time.Now()
-	sessionID := uuid.New().String()
+	ssID := uuid.New().String()
 
-	session := &domain.Session{
-		ID:               sessionID,
-		UserID:           userID,
-		EventID:          eventID,
-		Position:         0, // Will be updated after adding to queue
-		QueuedAt:         now,
-		EstimatedWaitSec: 0,
-		Status:           domain.SessionStatusQueued,
-		ExpiresAt:        now.Add(2 * time.Hour),
-		Priority:         priority,
-		UserAgent:        userAgent,
-		IPAddress:        ipAddress,
-		LastHeartbeatAt:  now,
-		AttemptCount:     1,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+	ss := &models.Session{
+		ID:              ssID,
+		UserID:          uID,
+		EventID:         eID,
+		Position:        0,
+		QueuedAt:        now,
+		Status:          models.SessionStatusQueued,
+		ExpiresAt:       now.Add(2 * time.Hour),
+		UserAgent:       userAgent,
+		IPAddress:       ipAddr,
+		LastHeartbeatAt: now,
+		AttemptCount:    1,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
-	if err := s.repo.Create(ctx, session); err != nil {
+	if err := s.repo.Create(ctx, ss); err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	s.logger.Info("Session created",
-		"session_id", sessionID,
-		"user_id", userID,
-		"event_id", eventID,
+	s.l.Info("Session created",
+		"session_id", ssID,
+		"user_id", uID,
+		"event_id", eID,
 	)
 
-	return session, nil
+	return ss, nil
 }
 
-func (s *sessionService) GetSession(ctx context.Context, sessionID string) (*domain.Session, error) {
-	session, err := s.repo.Get(ctx, sessionID)
+func (s *sessionService) GetSession(ctx context.Context, ssID string) (*models.Session, error) {
+	ss, err := s.repo.Get(ctx, ssID)
 	if err != nil {
 		return nil, err
 	}
 
-	return session, nil
+	return ss, nil
 }
 
-func (s *sessionService) GenerateCheckoutToken(ctx context.Context, session *domain.Session) (string, error) {
-	expiresAt := time.Now().Add(s.config.Expiry)
+func (s *sessionService) GenerateCheckoutToken(ctx context.Context, ss *models.Session) (string, error) {
+	expAt := time.Now().Add(s.conf.Expiry)
 
 	claims := jwt.MapClaims{
-		"session_id": session.ID,
-		"user_id":    session.UserID,
-		"event_id":   session.EventID,
-		"exp":        expiresAt.Unix(),
+		"session_id": ss.ID,
+		"user_id":    ss.UserID,
+		"event_id":   ss.EventID,
+		"exp":        expAt.Unix(),
 		"iat":        time.Now().Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(s.config.Secret))
+	tokenStr, err := token.SignedString([]byte(s.conf.Secret))
 	if err != nil {
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 
-	s.logger.Debug("Generated checkout token",
-		"session_id", session.ID,
-		"expires_at", expiresAt,
+	s.l.Debug("Generated checkout token",
+		"session_id", ss.ID,
+		"expires_at", expAt,
 	)
 
-	return tokenString, nil
+	return tokenStr, nil
 }
 
-func (s *sessionService) ValidateSession(ctx context.Context, sessionID string) error {
-	session, err := s.repo.Get(ctx, sessionID)
+func (s *sessionService) ValidateSession(ctx context.Context, ssID string) error {
+	ss, err := s.repo.Get(ctx, ssID)
 	if err != nil {
 		return err
 	}
 
-	if session.IsExpired() {
-		return domain.ErrSessionExpired
+	if ss.IsExpired() {
+		return errors.ErrSessionExpired
 	}
 
-	if !session.IsActive() {
-		return domain.ErrInvalidSessionStatus
+	if !ss.IsActive() {
+		return errors.ErrInvalidSessionStatus
 	}
 
 	return nil

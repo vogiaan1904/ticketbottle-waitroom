@@ -1,4 +1,4 @@
-package domain
+package models
 
 import "time"
 
@@ -8,14 +8,12 @@ type Session struct {
 	EventID           string        `json:"event_id"`
 	Position          int64         `json:"position"`
 	QueuedAt          time.Time     `json:"queued_at"`
-	EstimatedWaitSec  int           `json:"estimated_wait_sec"`
 	Status            SessionStatus `json:"status"`
 	AdmittedAt        *time.Time    `json:"admitted_at,omitempty"`
 	CompletedAt       *time.Time    `json:"completed_at,omitempty"`
 	ExpiresAt         time.Time     `json:"expires_at"`
 	CheckoutToken     string        `json:"checkout_token,omitempty"`
 	CheckoutExpiresAt *time.Time    `json:"checkout_expires_at,omitempty"`
-	Priority          int           `json:"priority"`
 	ConnectionID      string        `json:"connection_id,omitempty"`
 	UserAgent         string        `json:"user_agent,omitempty"`
 	IPAddress         string        `json:"ip_address,omitempty"`
@@ -65,6 +63,6 @@ func (s *Session) HasCheckoutExpired() bool {
 }
 
 func (s *Session) GetQueueScore() float64 {
-	priorityOffset := float64(s.Priority) * -3600.0
+	priorityOffset := float64(0) * -3600.0
 	return float64(s.QueuedAt.Unix()) + priorityOffset
 }

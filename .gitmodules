@@ -1,0 +1,4 @@
+[submodule "protos-submodule"]
+	path = protos-submodule
+	url = https://github.com/vogiaan1904/ticketbottle-proto.git
+	branch = main
