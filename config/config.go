@@ -11,17 +11,18 @@ import (
 )
 
 type Config struct {
-	Env    string
-	Server ServerConfig
-	Redis  RedisConfig
-	Queue  QueueConfig
-	JWT    JWTConfig
-	Log    LogConfig
-	Kafka  KafkaConfig
+	Env          string
+	Server       ServerConfig
+	Redis        RedisConfig
+	Queue        QueueConfig
+	JWT          JWTConfig
+	Log          LogConfig
+	Kafka        KafkaConfig
+	Microservice MicroserviceConfig
 }
 
 type ServerConfig struct {
-	Port         int
+	GRpcPort     int
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	IdleTimeout  time.Duration
@@ -45,14 +46,15 @@ type QueueConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers                []string
-	ProducerTopic          string
-	ConsumerGroupID        string
-	ConsumerTopics         []string
-	ProducerRetryMax       int
-	ProducerRequiredAcks   int
-	ConsumerSessionTimeout int
-	Enabled                bool
+	Brokers              []string
+	ProducerRetryMax     int
+	ProducerRequiredAcks int
+	Enabled              bool
+	ConsumerGroupID      string
+}
+
+type MicroserviceConfig struct {
+	Event string
 }
 
 type JWTConfig struct {
@@ -61,8 +63,9 @@ type JWTConfig struct {
 }
 
 type LogConfig struct {
-	Level  string
-	Format string
+	Level    string
+	Mode     string
+	Encoding string
 }
 
 func Load() (*Config, error) {
@@ -72,7 +75,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env: getEnv("ENV", "development"),
 		Server: ServerConfig{
-			Port:         getEnvAsInt("SERVER_PORT", 8080),
+			GRpcPort:     getEnvAsInt("SERVER_GRPC_PORT", 50054),
 			ReadTimeout:  getEnvAsDuration("SERVER_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout: getEnvAsDuration("SERVER_WRITE_TIMEOUT", 30*time.Second),
 			IdleTimeout:  getEnvAsDuration("SERVER_IDLE_TIMEOUT", 60*time.Second),
@@ -97,22 +100,19 @@ func Load() (*Config, error) {
 			Expiry: getEnvAsDuration("JWT_EXPIRY", 15*time.Minute),
 		},
 		Log: LogConfig{
-			Level:  getEnv("LOG_LEVEL", "info"),
-			Format: getEnv("LOG_FORMAT", "json"),
+			Level:    getEnv("LOG_LEVEL", "info"),
+			Mode:     getEnv("LOG_MODE", "development"),
+			Encoding: getEnv("LOG_ENCODING", "console"),
 		},
 		Kafka: KafkaConfig{
-			Brokers:         getEnvAsSlice("KAFKA_BROKERS", []string{"localhost:9092"}),
-			ProducerTopic:   getEnv("KAFKA_PRODUCER_TOPIC", "QUEUE_READY"),
-			ConsumerGroupID: getEnv("KAFKA_CONSUMER_GROUP_ID", "waitroom-service"),
-			ConsumerTopics: getEnvAsSlice("KAFKA_CONSUMER_TOPICS", []string{
-				"CHECKOUT_COMPLETED",
-				"CHECKOUT_FAILED",
-				"CHECKOUT_EXPIRED",
-			}),
-			ProducerRetryMax:       getEnvAsInt("KAFKA_PRODUCER_RETRY_MAX", 3),
-			ProducerRequiredAcks:   getEnvAsInt("KAFKA_PRODUCER_REQUIRED_ACKS", 1),
-			ConsumerSessionTimeout: getEnvAsInt("KAFKA_CONSUMER_SESSION_TIMEOUT", 10000),
-			Enabled:                getEnvAsBool("KAFKA_ENABLED", true),
+			Brokers:              getEnvAsSlice("KAFKA_BROKERS", []string{"localhost:9092"}),
+			ProducerRetryMax:     getEnvAsInt("KAFKA_PRODUCER_RETRY_MAX", 3),
+			ProducerRequiredAcks: getEnvAsInt("KAFKA_PRODUCER_REQUIRED_ACKS", 1),
+			Enabled:              getEnvAsBool("KAFKA_ENABLED", true),
+			ConsumerGroupID:      getEnv("KAFKA_CONSUMER_GROUP_ID", "waitroom-service"),
+		},
+		Microservice: MicroserviceConfig{
+			Event: getEnv("EVENT_SERVICE_ADDR", "localhost:50053"),
 		},
 	}
 
@@ -124,8 +124,8 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) Validate() error {
-	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+	if c.Server.GRpcPort <= 0 || c.Server.GRpcPort > 65535 {
+		return fmt.Errorf("invalid server port: %d", c.Server.GRpcPort)
 	}
 
 	if c.Redis.Addr == "" {

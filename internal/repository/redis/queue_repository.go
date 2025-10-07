@@ -24,14 +24,14 @@ type QueueRepository interface {
 }
 
 type redisQueueRepository struct {
-	client *redis.Client
-	logger logger.Logger
+	cli *redis.Client
+	l   logger.Logger
 }
 
-func NewRedisQueueRepository(client *redis.Client, logger logger.Logger) QueueRepository {
+func NewRedisQueueRepository(cli *redis.Client, l logger.Logger) QueueRepository {
 	return &redisQueueRepository{
-		client: client,
-		logger: logger,
+		cli: cli,
+		l:   l,
 	}
 }
 
@@ -39,14 +39,15 @@ func (r *redisQueueRepository) AddToQueue(ctx context.Context, eID string, ss *m
 	qKey := r.queueKey(eID)
 	score := ss.GetQueueScore()
 
-	if err := r.client.ZAdd(ctx, qKey, redis.Z{
+	if err := r.cli.ZAdd(ctx, qKey, redis.Z{
 		Score:  score,
 		Member: ss.ID,
 	}).Err(); err != nil {
-		return fmt.Errorf("failed to add to queue: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.AddToQueue: %v", err)
+		return err
 	}
 
-	r.logger.Debug("Added to queue",
+	r.l.Debugf(ctx, "Added to queue",
 		"event_id", eID,
 		"session_id", ss.ID,
 		"score", score,
@@ -58,13 +59,14 @@ func (r *redisQueueRepository) AddToQueue(ctx context.Context, eID string, ss *m
 func (r *redisQueueRepository) RemoveFromQueue(ctx context.Context, eID, ssID string) error {
 	qKey := r.queueKey(eID)
 
-	removed, err := r.client.ZRem(ctx, qKey, ssID).Result()
+	removed, err := r.cli.ZRem(ctx, qKey, ssID).Result()
 	if err != nil {
-		return fmt.Errorf("failed to remove from queue: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromQueue: %v", err)
+		return err
 	}
 
 	if removed > 0 {
-		r.logger.Debug("Removed from queue",
+		r.l.Debugf(ctx, "Removed from queue",
 			"event_id", eID,
 			"session_id", ssID,
 		)
@@ -89,9 +91,10 @@ func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, cou
 		return members
 	`)
 
-	res, err := script.Run(ctx, r.client, []string{qKey}, count).Result()
+	res, err := script.Run(ctx, r.cli, []string{qKey}, count).Result()
 	if err != nil {
-		return nil, fmt.Errorf("failed to pop from queue: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.PopFromQueue: %v", err)
+		return nil, err
 	}
 
 	ssIDs := make([]string, 0)
@@ -104,7 +107,7 @@ func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, cou
 	}
 
 	if len(ssIDs) > 0 {
-		r.logger.Debug("Popped from queue",
+		r.l.Debugf(ctx, "Popped from queue",
 			"event_id", eID,
 			"count", len(ssIDs),
 		)
@@ -116,9 +119,10 @@ func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, cou
 func (r *redisQueueRepository) GetQueueLength(ctx context.Context, eID string) (int64, error) {
 	qKey := r.queueKey(eID)
 
-	count, err := r.client.ZCard(ctx, qKey).Result()
+	count, err := r.cli.ZCard(ctx, qKey).Result()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get queue length: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.GetQueueLength: %v", err)
+		return 0, err
 	}
 
 	return count, nil
@@ -127,12 +131,14 @@ func (r *redisQueueRepository) GetQueueLength(ctx context.Context, eID string) (
 func (r *redisQueueRepository) GetQueuePosition(ctx context.Context, eID, ssID string) (int64, error) {
 	qKey := r.queueKey(eID)
 
-	rank, err := r.client.ZRank(ctx, qKey, ssID).Result()
+	rank, err := r.cli.ZRank(ctx, qKey, ssID).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return -1, nil // Not in queue
 		}
-		return 0, fmt.Errorf("failed to get queue position: %w", err)
+
+		r.l.Errorf(ctx, "redisQueueRepository.GetQueuePosition: %v", err)
+		return 0, err
 	}
 
 	return rank + 1, nil // Convert to 1-indexed position
@@ -141,9 +147,10 @@ func (r *redisQueueRepository) GetQueuePosition(ctx context.Context, eID, ssID s
 func (r *redisQueueRepository) GetQueueMembers(ctx context.Context, eID string, start, stop int64) ([]string, error) {
 	qKey := r.queueKey(eID)
 
-	members, err := r.client.ZRange(ctx, qKey, start, stop).Result()
+	members, err := r.cli.ZRange(ctx, qKey, start, stop).Result()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get queue members: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.GetQueueMembers: %v", err)
+		return nil, err
 	}
 
 	return members, nil
@@ -152,15 +159,16 @@ func (r *redisQueueRepository) GetQueueMembers(ctx context.Context, eID string, 
 func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID string, ttl time.Duration) error {
 	pKey := r.processingKey(eID)
 
-	pipe := r.client.Pipeline()
+	pipe := r.cli.Pipeline()
 	pipe.SAdd(ctx, pKey, ssID)
 	pipe.Expire(ctx, pKey, ttl)
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("failed to add to processing: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.AddToProcessing: %v", err)
+		return err
 	}
 
-	r.logger.Debug("Added to processing",
+	r.l.Debugf(ctx, "Added to processing",
 		"event_id", eID,
 		"session_id", ssID,
 		"ttl", ttl,
@@ -172,11 +180,12 @@ func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID st
 func (r *redisQueueRepository) RemoveFromProcessing(ctx context.Context, eID, ssID string) error {
 	pKey := r.processingKey(eID)
 
-	if err := r.client.SRem(ctx, pKey, ssID).Err(); err != nil {
-		return fmt.Errorf("failed to remove from processing: %w", err)
+	if err := r.cli.SRem(ctx, pKey, ssID).Err(); err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromProcessing: %v", err)
+		return err
 	}
 
-	r.logger.Debug("Removed from processing",
+	r.l.Debugf(ctx, "Removed from processing",
 		"event_id", eID,
 		"session_id", ssID,
 	)
@@ -187,9 +196,10 @@ func (r *redisQueueRepository) RemoveFromProcessing(ctx context.Context, eID, ss
 func (r *redisQueueRepository) GetProcessingCount(ctx context.Context, eID string) (int64, error) {
 	pKey := r.processingKey(eID)
 
-	count, err := r.client.SCard(ctx, pKey).Result()
+	count, err := r.cli.SCard(ctx, pKey).Result()
 	if err != nil {
-		return 0, fmt.Errorf("failed to get processing count: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.GetProcessingCount: %v", err)
+		return 0, err
 	}
 
 	return count, nil
@@ -198,9 +208,10 @@ func (r *redisQueueRepository) GetProcessingCount(ctx context.Context, eID strin
 func (r *redisQueueRepository) IsProcessing(ctx context.Context, eID, ssID string) (bool, error) {
 	pKey := r.processingKey(eID)
 
-	exists, err := r.client.SIsMember(ctx, pKey, ssID).Result()
+	exists, err := r.cli.SIsMember(ctx, pKey, ssID).Result()
 	if err != nil {
-		return false, fmt.Errorf("failed to check processing status: %w", err)
+		r.l.Errorf(ctx, "redisQueueRepository.IsProcessing: %v", err)
+		return false, err
 	}
 
 	return exists, nil

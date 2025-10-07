@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/vogiaan1904/ticketbottle-waitroom/internal/errors"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
 )
@@ -25,14 +24,14 @@ type SessionRepository interface {
 }
 
 type redisSessionRepository struct {
-	client *redis.Client
-	logger logger.Logger
+	cli *redis.Client
+	l   logger.Logger
 }
 
-func NewRedisSessionRepository(client *redis.Client, logger logger.Logger) SessionRepository {
+func NewRedisSessionRepository(cli *redis.Client, l logger.Logger) SessionRepository {
 	return &redisSessionRepository{
-		client: client,
-		logger: logger,
+		cli: cli,
+		l:   l,
 	}
 }
 
@@ -45,7 +44,7 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 	}
 
 	// Use pipeline for atomic operation
-	pipe := r.client.Pipeline()
+	pipe := r.cli.Pipeline()
 	pipe.Set(ctx, key, data, 2*time.Hour)
 
 	// Create user->session index
@@ -53,10 +52,11 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 	pipe.Set(ctx, ueKey, ss.ID, 2*time.Hour)
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Create: %v", err)
+		return err
 	}
 
-	r.logger.Debug("Session created",
+	r.l.Debugf(ctx, "Session created",
 		"session_id", ss.ID,
 		"user_id", ss.UserID,
 		"event_id", ss.EventID,
@@ -68,17 +68,16 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 func (r *redisSessionRepository) Get(ctx context.Context, ssID string) (*models.Session, error) {
 	key := r.sessionKey(ssID)
 
-	data, err := r.client.Get(ctx, key).Bytes()
+	data, err := r.cli.Get(ctx, key).Bytes()
 	if err != nil {
-		if err == redis.Nil {
-			return nil, errors.ErrSessionNotFound
-		}
-		return nil, fmt.Errorf("failed to get session: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Get: %v", err)
+		return nil, err
 	}
 
 	var ss models.Session
 	if err := json.Unmarshal(data, &ss); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Get: %v", err)
+		return nil, err
 	}
 
 	return &ss, nil
@@ -91,21 +90,24 @@ func (r *redisSessionRepository) Update(ctx context.Context, ss *models.Session)
 
 	data, err := json.Marshal(ss)
 	if err != nil {
-		return fmt.Errorf("failed to marshal session: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
+		return err
 	}
 
 	// Get current TTL to preserve it
-	ttl, err := r.client.TTL(ctx, key).Result()
+	ttl, err := r.cli.TTL(ctx, key).Result()
 	if err != nil {
-		return fmt.Errorf("failed to get TTL: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
+		return err
 	}
 
 	if ttl <= 0 {
 		ttl = 2 * time.Hour
 	}
 
-	if err := r.client.Set(ctx, key, data, ttl).Err(); err != nil {
-		return fmt.Errorf("failed to update session: %w", err)
+	if err := r.cli.Set(ctx, key, data, ttl).Err(); err != nil {
+		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
+		return err
 	}
 
 	return nil
@@ -126,6 +128,7 @@ func (r *redisSessionRepository) UpdateStatus(ctx context.Context, ssID string, 
 func (r *redisSessionRepository) UpdatePosition(ctx context.Context, ssID string, pos int64) error {
 	ss, err := r.Get(ctx, ssID)
 	if err != nil {
+		r.l.Errorf(ctx, "redisSessionRepository.UpdatePosition.Get: %v", err)
 		return err
 	}
 
@@ -154,13 +157,15 @@ func (r *redisSessionRepository) UpdateCheckoutToken(ctx context.Context, ssID s
 func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error {
 	ss, err := r.Get(ctx, ssID)
 	if err != nil {
-		if err == errors.ErrSessionNotFound {
+		if err == redis.Nil {
 			return nil // Already deleted
 		}
+
+		r.l.Errorf(ctx, "redisSessionRepository.Delete.Get: %v", err)
 		return err
 	}
 
-	pipe := r.client.Pipeline()
+	pipe := r.cli.Pipeline()
 
 	// Delete session
 	pipe.Del(ctx, r.sessionKey(ssID))
@@ -169,10 +174,11 @@ func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error 
 	pipe.Del(ctx, r.userEventKey(ss.UserID, ss.EventID))
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("failed to delete session: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Delete: %v", err)
+		return err
 	}
 
-	r.logger.Debug("Session deleted", "session_id", ssID)
+	r.l.Debugf(ctx, "Session deleted", "session_id", ssID)
 
 	return nil
 }
@@ -180,12 +186,10 @@ func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error 
 func (r *redisSessionRepository) GetByUserAndEvent(ctx context.Context, uID, eID string) (*models.Session, error) {
 	ueKey := r.userEventKey(uID, eID)
 
-	ssID, err := r.client.Get(ctx, ueKey).Result()
+	ssID, err := r.cli.Get(ctx, ueKey).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return nil, errors.ErrSessionNotFound
-		}
-		return nil, fmt.Errorf("failed to get session by user and event: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.GetByUserAndEvent: %v", err)
+		return nil, err
 	}
 
 	return r.Get(ctx, ssID)
@@ -193,10 +197,12 @@ func (r *redisSessionRepository) GetByUserAndEvent(ctx context.Context, uID, eID
 
 func (r *redisSessionRepository) Exists(ctx context.Context, ssID string) (bool, error) {
 	key := r.sessionKey(ssID)
-	exists, err := r.client.Exists(ctx, key).Result()
+	exists, err := r.cli.Exists(ctx, key).Result()
 	if err != nil {
-		return false, fmt.Errorf("failed to check session existence: %w", err)
+		r.l.Errorf(ctx, "redisSessionRepository.Exists: %v", err)
+		return false, err
 	}
+
 	return exists > 0, nil
 }
 

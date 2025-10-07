@@ -73,6 +73,7 @@ dev: docker-up run ## Start development environment
 
 protoc-all:
 	$(MAKE) protoc PROTO=protos-submodule/waitroom.proto OUT_DIR=protogen/waitroom
+	$(MAKE) protoc PROTO=protos-submodule/event.proto OUT_DIR=protogen/event
 
 protoc:
 	protoc --go_out=$(OUT_DIR) --go_opt=paths=source_relative \
@@ -81,7 +82,7 @@ protoc:
 
 gen-proto:
 	@echo "Updating git submodule..."
-	git submodule update --remote protos-submodule
+	git submodule update --remote --recursive protos-submodule
 
 	@echo "Regenerating proto code..."
 	make protoc-all

@@ -35,32 +35,23 @@ type QueueLeftEvent struct {
 // Events consumed BY Waitroom Service (from Checkout Service)
 
 type CheckoutCompletedEvent struct {
-	OrderID   string    `json:"order_id"`
 	SessionID string    `json:"session_id"`
 	UserID    string    `json:"user_id"`
 	EventID   string    `json:"event_id"`
-	Tickets   []Ticket  `json:"tickets"`
-	PaymentID string    `json:"payment_id"`
-	Amount    float64   `json:"amount"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 type CheckoutFailedEvent struct {
-	OrderID      string    `json:"order_id"`
-	SessionID    string    `json:"session_id"`
-	UserID       string    `json:"user_id"`
-	EventID      string    `json:"event_id"`
-	Reason       string    `json:"reason"`
-	ErrorMessage string    `json:"error_message"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
-type CheckoutExpiredEvent struct {
-	OrderID   string    `json:"order_id"`
 	SessionID string    `json:"session_id"`
 	UserID    string    `json:"user_id"`
 	EventID   string    `json:"event_id"`
-	Tickets   []Ticket  `json:"tickets"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type CheckoutExpiredEvent struct {
+	SessionID string    `json:"session_id"`
+	UserID    string    `json:"user_id"`
+	EventID   string    `json:"event_id"`
 	ExpiredAt time.Time `json:"expired_at"`
 	Timestamp time.Time `json:"timestamp"`
 }
@@ -71,13 +62,3 @@ type Ticket struct {
 	Category string  `json:"category"`
 	Price    float64 `json:"price"`
 }
-
-// Topic names
-const (
-	TopicQueueReady        = "QUEUE_READY"
-	TopicQueueJoined       = "QUEUE_JOINED"
-	TopicQueueLeft         = "QUEUE_LEFT"
-	TopicCheckoutCompleted = "CHECKOUT_COMPLETED"
-	TopicCheckoutFailed    = "CHECKOUT_FAILED"
-	TopicCheckoutExpired   = "CHECKOUT_EXPIRED"
-)

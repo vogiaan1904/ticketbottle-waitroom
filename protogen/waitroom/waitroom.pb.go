@@ -9,7 +9,6 @@ package waitroom
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -93,9 +92,8 @@ type JoinQueueRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	EventId       string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
-	Priority      int32                  `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"`
-	UserAgent     string                 `protobuf:"bytes,4,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
-	IpAddress     string                 `protobuf:"bytes,5,opt,name=ip_address,json=ipAddress,proto3" json:"ip_address,omitempty"`
+	UserAgent     string                 `protobuf:"bytes,3,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	IpAddress     string                 `protobuf:"bytes,4,opt,name=ip_address,json=ipAddress,proto3" json:"ip_address,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -144,13 +142,6 @@ func (x *JoinQueueRequest) GetEventId() string {
 	return ""
 }
 
-func (x *JoinQueueRequest) GetPriority() int32 {
-	if x != nil {
-		return x.Priority
-	}
-	return 0
-}
-
 func (x *JoinQueueRequest) GetUserAgent() string {
 	if x != nil {
 		return x.UserAgent
@@ -166,16 +157,15 @@ func (x *JoinQueueRequest) GetIpAddress() string {
 }
 
 type JoinQueueResponse struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	SessionId            string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Position             int64                  `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
-	QueueLength          int64                  `protobuf:"varint,3,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
-	EstimatedWaitSeconds int32                  `protobuf:"varint,4,opt,name=estimated_wait_seconds,json=estimatedWaitSeconds,proto3" json:"estimated_wait_seconds,omitempty"`
-	QueuedAt             *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`
-	ExpiresAt            *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	WebsocketUrl         string                 `protobuf:"bytes,7,opt,name=websocket_url,json=websocketUrl,proto3" json:"websocket_url,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Position      int64                  `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
+	QueueLength   int64                  `protobuf:"varint,3,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
+	QueuedAt      string                 `protobuf:"bytes,4,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`
+	ExpiresAt     string                 `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	WebsocketUrl  string                 `protobuf:"bytes,6,opt,name=websocket_url,json=websocketUrl,proto3" json:"websocket_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *JoinQueueResponse) Reset() {
@@ -229,25 +219,18 @@ func (x *JoinQueueResponse) GetQueueLength() int64 {
 	return 0
 }
 
-func (x *JoinQueueResponse) GetEstimatedWaitSeconds() int32 {
-	if x != nil {
-		return x.EstimatedWaitSeconds
-	}
-	return 0
-}
-
-func (x *JoinQueueResponse) GetQueuedAt() *timestamppb.Timestamp {
+func (x *JoinQueueResponse) GetQueuedAt() string {
 	if x != nil {
 		return x.QueuedAt
 	}
-	return nil
+	return ""
 }
 
-func (x *JoinQueueResponse) GetExpiresAt() *timestamppb.Timestamp {
+func (x *JoinQueueResponse) GetExpiresAt() string {
 	if x != nil {
 		return x.ExpiresAt
 	}
-	return nil
+	return ""
 }
 
 func (x *JoinQueueResponse) GetWebsocketUrl() string {
@@ -302,20 +285,19 @@ func (x *GetQueueStatusRequest) GetSessionId() string {
 }
 
 type QueueStatusResponse struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	SessionId            string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Status               SessionStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=waitroom.v1.SessionStatus" json:"status,omitempty"`
-	Position             int64                  `protobuf:"varint,3,opt,name=position,proto3" json:"position,omitempty"`
-	QueueLength          int64                  `protobuf:"varint,4,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
-	EstimatedWaitSeconds int32                  `protobuf:"varint,5,opt,name=estimated_wait_seconds,json=estimatedWaitSeconds,proto3" json:"estimated_wait_seconds,omitempty"`
-	QueuedAt             *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`
-	ExpiresAt            *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	CheckoutToken        string                 `protobuf:"bytes,8,opt,name=checkout_token,json=checkoutToken,proto3" json:"checkout_token,omitempty"`
-	CheckoutUrl          string                 `protobuf:"bytes,9,opt,name=checkout_url,json=checkoutUrl,proto3" json:"checkout_url,omitempty"`
-	CheckoutExpiresAt    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=checkout_expires_at,json=checkoutExpiresAt,proto3" json:"checkout_expires_at,omitempty"`
-	AdmittedAt           *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=admitted_at,json=admittedAt,proto3" json:"admitted_at,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	SessionId         string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Status            SessionStatus          `protobuf:"varint,2,opt,name=status,proto3,enum=waitroom.v1.SessionStatus" json:"status,omitempty"`
+	Position          int64                  `protobuf:"varint,3,opt,name=position,proto3" json:"position,omitempty"`
+	QueueLength       int64                  `protobuf:"varint,4,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
+	QueuedAt          string                 `protobuf:"bytes,5,opt,name=queued_at,json=queuedAt,proto3" json:"queued_at,omitempty"`
+	ExpiresAt         string                 `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	CheckoutToken     string                 `protobuf:"bytes,7,opt,name=checkout_token,json=checkoutToken,proto3" json:"checkout_token,omitempty"`
+	CheckoutUrl       string                 `protobuf:"bytes,8,opt,name=checkout_url,json=checkoutUrl,proto3" json:"checkout_url,omitempty"`
+	CheckoutExpiresAt string                 `protobuf:"bytes,9,opt,name=checkout_expires_at,json=checkoutExpiresAt,proto3" json:"checkout_expires_at,omitempty"`
+	AdmittedAt        string                 `protobuf:"bytes,10,opt,name=admitted_at,json=admittedAt,proto3" json:"admitted_at,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *QueueStatusResponse) Reset() {
@@ -376,25 +358,18 @@ func (x *QueueStatusResponse) GetQueueLength() int64 {
 	return 0
 }
 
-func (x *QueueStatusResponse) GetEstimatedWaitSeconds() int32 {
-	if x != nil {
-		return x.EstimatedWaitSeconds
-	}
-	return 0
-}
-
-func (x *QueueStatusResponse) GetQueuedAt() *timestamppb.Timestamp {
+func (x *QueueStatusResponse) GetQueuedAt() string {
 	if x != nil {
 		return x.QueuedAt
 	}
-	return nil
+	return ""
 }
 
-func (x *QueueStatusResponse) GetExpiresAt() *timestamppb.Timestamp {
+func (x *QueueStatusResponse) GetExpiresAt() string {
 	if x != nil {
 		return x.ExpiresAt
 	}
-	return nil
+	return ""
 }
 
 func (x *QueueStatusResponse) GetCheckoutToken() string {
@@ -411,18 +386,18 @@ func (x *QueueStatusResponse) GetCheckoutUrl() string {
 	return ""
 }
 
-func (x *QueueStatusResponse) GetCheckoutExpiresAt() *timestamppb.Timestamp {
+func (x *QueueStatusResponse) GetCheckoutExpiresAt() string {
 	if x != nil {
 		return x.CheckoutExpiresAt
 	}
-	return nil
+	return ""
 }
 
-func (x *QueueStatusResponse) GetAdmittedAt() *timestamppb.Timestamp {
+func (x *QueueStatusResponse) GetAdmittedAt() string {
 	if x != nil {
 		return x.AdmittedAt
 	}
-	return nil
+	return ""
 }
 
 type LeaveQueueRequest struct {
@@ -566,17 +541,16 @@ func (x *StreamPositionRequest) GetSessionId() string {
 }
 
 type PositionUpdate struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	SessionId            string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Position             int64                  `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
-	QueueLength          int64                  `protobuf:"varint,3,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
-	EstimatedWaitSeconds int32                  `protobuf:"varint,4,opt,name=estimated_wait_seconds,json=estimatedWaitSeconds,proto3" json:"estimated_wait_seconds,omitempty"`
-	Status               SessionStatus          `protobuf:"varint,5,opt,name=status,proto3,enum=waitroom.v1.SessionStatus" json:"status,omitempty"`
-	UpdatedAt            *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	CheckoutToken        string                 `protobuf:"bytes,7,opt,name=checkout_token,json=checkoutToken,proto3" json:"checkout_token,omitempty"`
-	CheckoutUrl          string                 `protobuf:"bytes,8,opt,name=checkout_url,json=checkoutUrl,proto3" json:"checkout_url,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Position      int64                  `protobuf:"varint,2,opt,name=position,proto3" json:"position,omitempty"`
+	QueueLength   int64                  `protobuf:"varint,3,opt,name=queue_length,json=queueLength,proto3" json:"queue_length,omitempty"`
+	Status        SessionStatus          `protobuf:"varint,4,opt,name=status,proto3,enum=waitroom.v1.SessionStatus" json:"status,omitempty"`
+	UpdatedAt     string                 `protobuf:"bytes,5,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	CheckoutToken string                 `protobuf:"bytes,6,opt,name=checkout_token,json=checkoutToken,proto3" json:"checkout_token,omitempty"`
+	CheckoutUrl   string                 `protobuf:"bytes,7,opt,name=checkout_url,json=checkoutUrl,proto3" json:"checkout_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PositionUpdate) Reset() {
@@ -630,13 +604,6 @@ func (x *PositionUpdate) GetQueueLength() int64 {
 	return 0
 }
 
-func (x *PositionUpdate) GetEstimatedWaitSeconds() int32 {
-	if x != nil {
-		return x.EstimatedWaitSeconds
-	}
-	return 0
-}
-
 func (x *PositionUpdate) GetStatus() SessionStatus {
 	if x != nil {
 		return x.Status
@@ -644,11 +611,11 @@ func (x *PositionUpdate) GetStatus() SessionStatus {
 	return SessionStatus_SESSION_STATUS_UNSPECIFIED
 }
 
-func (x *PositionUpdate) GetUpdatedAt() *timestamppb.Timestamp {
+func (x *PositionUpdate) GetUpdatedAt() string {
 	if x != nil {
 		return x.UpdatedAt
 	}
-	return nil
+	return ""
 }
 
 func (x *PositionUpdate) GetCheckoutToken() string {
@@ -781,43 +748,40 @@ var File_waitroom_proto protoreflect.FileDescriptor
 
 const file_waitroom_proto_rawDesc = "" +
 	"\n" +
-	"\x0ewaitroom.proto\x12\vwaitroom.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa0\x01\n" +
+	"\x0ewaitroom.proto\x12\vwaitroom.v1\"\x84\x01\n" +
 	"\x10JoinQueueRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x19\n" +
-	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x1a\n" +
-	"\bpriority\x18\x03 \x01(\x05R\bpriority\x12\x1d\n" +
+	"\bevent_id\x18\x02 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
-	"user_agent\x18\x04 \x01(\tR\tuserAgent\x12\x1d\n" +
+	"user_agent\x18\x03 \x01(\tR\tuserAgent\x12\x1d\n" +
 	"\n" +
-	"ip_address\x18\x05 \x01(\tR\tipAddress\"\xc0\x02\n" +
+	"ip_address\x18\x04 \x01(\tR\tipAddress\"\xd2\x01\n" +
 	"\x11JoinQueueResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
 	"\bposition\x18\x02 \x01(\x03R\bposition\x12!\n" +
-	"\fqueue_length\x18\x03 \x01(\x03R\vqueueLength\x124\n" +
-	"\x16estimated_wait_seconds\x18\x04 \x01(\x05R\x14estimatedWaitSeconds\x127\n" +
-	"\tqueued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bqueuedAt\x129\n" +
+	"\fqueue_length\x18\x03 \x01(\x03R\vqueueLength\x12\x1b\n" +
+	"\tqueued_at\x18\x04 \x01(\tR\bqueuedAt\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12#\n" +
-	"\rwebsocket_url\x18\a \x01(\tR\fwebsocketUrl\"6\n" +
+	"expires_at\x18\x05 \x01(\tR\texpiresAt\x12#\n" +
+	"\rwebsocket_url\x18\x06 \x01(\tR\fwebsocketUrl\"6\n" +
 	"\x15GetQueueStatusRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\xa4\x04\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xfe\x02\n" +
 	"\x13QueueStatusResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x122\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1a.waitroom.v1.SessionStatusR\x06status\x12\x1a\n" +
 	"\bposition\x18\x03 \x01(\x03R\bposition\x12!\n" +
-	"\fqueue_length\x18\x04 \x01(\x03R\vqueueLength\x124\n" +
-	"\x16estimated_wait_seconds\x18\x05 \x01(\x05R\x14estimatedWaitSeconds\x127\n" +
-	"\tqueued_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bqueuedAt\x129\n" +
+	"\fqueue_length\x18\x04 \x01(\x03R\vqueueLength\x12\x1b\n" +
+	"\tqueued_at\x18\x05 \x01(\tR\bqueuedAt\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12%\n" +
-	"\x0echeckout_token\x18\b \x01(\tR\rcheckoutToken\x12!\n" +
-	"\fcheckout_url\x18\t \x01(\tR\vcheckoutUrl\x12J\n" +
-	"\x13checkout_expires_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\x11checkoutExpiresAt\x12;\n" +
-	"\vadmitted_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"expires_at\x18\x06 \x01(\tR\texpiresAt\x12%\n" +
+	"\x0echeckout_token\x18\a \x01(\tR\rcheckoutToken\x12!\n" +
+	"\fcheckout_url\x18\b \x01(\tR\vcheckoutUrl\x12.\n" +
+	"\x13checkout_expires_at\x18\t \x01(\tR\x11checkoutExpiresAt\x12\x1f\n" +
+	"\vadmitted_at\x18\n" +
+	" \x01(\tR\n" +
 	"admittedAt\"2\n" +
 	"\x11LeaveQueueRequest\x12\x1d\n" +
 	"\n" +
@@ -828,18 +792,17 @@ const file_waitroom_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"6\n" +
 	"\x15StreamPositionRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\xdd\x02\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x8b\x02\n" +
 	"\x0ePositionUpdate\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
 	"\bposition\x18\x02 \x01(\x03R\bposition\x12!\n" +
-	"\fqueue_length\x18\x03 \x01(\x03R\vqueueLength\x124\n" +
-	"\x16estimated_wait_seconds\x18\x04 \x01(\x05R\x14estimatedWaitSeconds\x122\n" +
-	"\x06status\x18\x05 \x01(\x0e2\x1a.waitroom.v1.SessionStatusR\x06status\x129\n" +
+	"\fqueue_length\x18\x03 \x01(\x03R\vqueueLength\x122\n" +
+	"\x06status\x18\x04 \x01(\x0e2\x1a.waitroom.v1.SessionStatusR\x06status\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12%\n" +
-	"\x0echeckout_token\x18\a \x01(\tR\rcheckoutToken\x12!\n" +
-	"\fcheckout_url\x18\b \x01(\tR\vcheckoutUrl\"\x14\n" +
+	"updated_at\x18\x05 \x01(\tR\tupdatedAt\x12%\n" +
+	"\x0echeckout_token\x18\x06 \x01(\tR\rcheckoutToken\x12!\n" +
+	"\fcheckout_url\x18\a \x01(\tR\vcheckoutUrl\"\x14\n" +
 	"\x12HealthCheckRequest\"\x97\x02\n" +
 	"\x13HealthCheckResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x18\n" +
@@ -868,7 +831,7 @@ const file_waitroom_proto_rawDesc = "" +
 	"\n" +
 	"LeaveQueue\x12\x1e.waitroom.v1.LeaveQueueRequest\x1a\x1f.waitroom.v1.LeaveQueueResponse\x12X\n" +
 	"\x13StreamQueuePosition\x12\".waitroom.v1.StreamPositionRequest\x1a\x1b.waitroom.v1.PositionUpdate0\x01\x12P\n" +
-	"\vHealthCheck\x12\x1f.waitroom.v1.HealthCheckRequest\x1a .waitroom.v1.HealthCheckResponseBFZDgithub.com/vogiaan1904/ticketbottle-waitroom/proto/waitroom;waitroomb\x06proto3"
+	"\vHealthCheck\x12\x1f.waitroom.v1.HealthCheckRequest\x1a .waitroom.v1.HealthCheckResponseB:Z8github.com/vogiaan1904/ticketbottle-proto/proto/waitroomb\x06proto3"
 
 var (
 	file_waitroom_proto_rawDescOnce sync.Once
@@ -897,34 +860,26 @@ var file_waitroom_proto_goTypes = []any{
 	(*HealthCheckRequest)(nil),    // 9: waitroom.v1.HealthCheckRequest
 	(*HealthCheckResponse)(nil),   // 10: waitroom.v1.HealthCheckResponse
 	nil,                           // 11: waitroom.v1.HealthCheckResponse.ComponentsEntry
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 }
 var file_waitroom_proto_depIdxs = []int32{
-	12, // 0: waitroom.v1.JoinQueueResponse.queued_at:type_name -> google.protobuf.Timestamp
-	12, // 1: waitroom.v1.JoinQueueResponse.expires_at:type_name -> google.protobuf.Timestamp
-	0,  // 2: waitroom.v1.QueueStatusResponse.status:type_name -> waitroom.v1.SessionStatus
-	12, // 3: waitroom.v1.QueueStatusResponse.queued_at:type_name -> google.protobuf.Timestamp
-	12, // 4: waitroom.v1.QueueStatusResponse.expires_at:type_name -> google.protobuf.Timestamp
-	12, // 5: waitroom.v1.QueueStatusResponse.checkout_expires_at:type_name -> google.protobuf.Timestamp
-	12, // 6: waitroom.v1.QueueStatusResponse.admitted_at:type_name -> google.protobuf.Timestamp
-	0,  // 7: waitroom.v1.PositionUpdate.status:type_name -> waitroom.v1.SessionStatus
-	12, // 8: waitroom.v1.PositionUpdate.updated_at:type_name -> google.protobuf.Timestamp
-	11, // 9: waitroom.v1.HealthCheckResponse.components:type_name -> waitroom.v1.HealthCheckResponse.ComponentsEntry
-	1,  // 10: waitroom.v1.WaitroomService.JoinQueue:input_type -> waitroom.v1.JoinQueueRequest
-	3,  // 11: waitroom.v1.WaitroomService.GetQueueStatus:input_type -> waitroom.v1.GetQueueStatusRequest
-	5,  // 12: waitroom.v1.WaitroomService.LeaveQueue:input_type -> waitroom.v1.LeaveQueueRequest
-	7,  // 13: waitroom.v1.WaitroomService.StreamQueuePosition:input_type -> waitroom.v1.StreamPositionRequest
-	9,  // 14: waitroom.v1.WaitroomService.HealthCheck:input_type -> waitroom.v1.HealthCheckRequest
-	2,  // 15: waitroom.v1.WaitroomService.JoinQueue:output_type -> waitroom.v1.JoinQueueResponse
-	4,  // 16: waitroom.v1.WaitroomService.GetQueueStatus:output_type -> waitroom.v1.QueueStatusResponse
-	6,  // 17: waitroom.v1.WaitroomService.LeaveQueue:output_type -> waitroom.v1.LeaveQueueResponse
-	8,  // 18: waitroom.v1.WaitroomService.StreamQueuePosition:output_type -> waitroom.v1.PositionUpdate
-	10, // 19: waitroom.v1.WaitroomService.HealthCheck:output_type -> waitroom.v1.HealthCheckResponse
-	15, // [15:20] is the sub-list for method output_type
-	10, // [10:15] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	0,  // 0: waitroom.v1.QueueStatusResponse.status:type_name -> waitroom.v1.SessionStatus
+	0,  // 1: waitroom.v1.PositionUpdate.status:type_name -> waitroom.v1.SessionStatus
+	11, // 2: waitroom.v1.HealthCheckResponse.components:type_name -> waitroom.v1.HealthCheckResponse.ComponentsEntry
+	1,  // 3: waitroom.v1.WaitroomService.JoinQueue:input_type -> waitroom.v1.JoinQueueRequest
+	3,  // 4: waitroom.v1.WaitroomService.GetQueueStatus:input_type -> waitroom.v1.GetQueueStatusRequest
+	5,  // 5: waitroom.v1.WaitroomService.LeaveQueue:input_type -> waitroom.v1.LeaveQueueRequest
+	7,  // 6: waitroom.v1.WaitroomService.StreamQueuePosition:input_type -> waitroom.v1.StreamPositionRequest
+	9,  // 7: waitroom.v1.WaitroomService.HealthCheck:input_type -> waitroom.v1.HealthCheckRequest
+	2,  // 8: waitroom.v1.WaitroomService.JoinQueue:output_type -> waitroom.v1.JoinQueueResponse
+	4,  // 9: waitroom.v1.WaitroomService.GetQueueStatus:output_type -> waitroom.v1.QueueStatusResponse
+	6,  // 10: waitroom.v1.WaitroomService.LeaveQueue:output_type -> waitroom.v1.LeaveQueueResponse
+	8,  // 11: waitroom.v1.WaitroomService.StreamQueuePosition:output_type -> waitroom.v1.PositionUpdate
+	10, // 12: waitroom.v1.WaitroomService.HealthCheck:output_type -> waitroom.v1.HealthCheckResponse
+	8,  // [8:13] is the sub-list for method output_type
+	3,  // [3:8] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_waitroom_proto_init() }

@@ -4,166 +4,126 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/vogiaan1904/ticketbottle-waitroom/internal/kafka"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
-	"github.com/vogiaan1904/ticketbottle-waitroom/internal/queue"
 	repo "github.com/vogiaan1904/ticketbottle-waitroom/internal/repository/redis"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
 )
 
 type QueueService interface {
-	EnqueueSession(ctx context.Context, ss *models.Session) (int64, error)
-	DequeueSession(ctx context.Context, eID, ssID string) error
-	GetQueueStatus(ctx context.Context, ssID string) (QueueStatusOutput, error)
-	GetQueueInfo(ctx context.Context, eID string) (*queue.QueueInfo, error)
+	EnqueueSession(ctx context.Context, session *models.Session) (int64, error)
+	DequeueSession(ctx context.Context, eventID, sessionID string) error
+	GetQueueStatus(ctx context.Context, sessionID string, session *models.Session) (*QueueStatusOutput, error)
+	GetQueueInfo(ctx context.Context, eventID string) (*QueueInfoOutput, error)
+	RemoveFromProcessing(ctx context.Context, eventID, sessionID string) error
+	GetProcessingCount(ctx context.Context, eventID string) (int64, error)
 }
 
 type queueService struct {
-	queueRepo    repo.QueueRepository
-	sessionRepo  repo.SessionRepository
-	queueManager *queue.Manager
-	prod         kafka.Producer
-	logger       logger.Logger
+	repo repo.QueueRepository
+	l    logger.Logger
 }
 
 func NewQueueService(
-	queueRepo repo.QueueRepository,
-	sessionRepo repo.SessionRepository,
-	queueManager *queue.Manager,
-	prod kafka.Producer,
-	logger logger.Logger,
+	repo repo.QueueRepository,
+	l logger.Logger,
 ) QueueService {
 	return &queueService{
-		queueRepo:    queueRepo,
-		sessionRepo:  sessionRepo,
-		queueManager: queueManager,
-		prod:         prod,
-		logger:       logger,
+		repo: repo,
+		l:    l,
 	}
 }
 
 func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (int64, error) {
 	// Add to queue (Redis sorted set)
-	if err := s.queueRepo.AddToQueue(ctx, ss.EventID, ss); err != nil {
+	if err := s.repo.AddToQueue(ctx, ss.EventID, ss); err != nil {
 		return 0, fmt.Errorf("failed to add to queue: %w", err)
 	}
 
-	pos, err := s.queueRepo.GetQueuePosition(ctx, ss.EventID, ss.ID)
+	// Get position in queue
+	pos, err := s.repo.GetQueuePosition(ctx, ss.EventID, ss.ID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get queue position: %w", err)
 	}
 
+	// Update session object (caller will persist)
 	ss.Position = pos
-	if err := s.sessionRepo.Update(ctx, ss); err != nil {
-		return 0, fmt.Errorf("failed to update session: %w", err)
-	}
 
-	if s.prod != nil {
-		if err := s.prod.PublishQueueJoined(ctx, kafka.QueueJoinedEvent{
-			SessionID: ss.ID,
-			UserID:    ss.UserID,
-			EventID:   ss.EventID,
-			Position:  pos,
-			JoinedAt:  ss.QueuedAt,
-		}); err != nil {
-			// Log error but don't fail the request
-			s.logger.Error("Failed to publish queue joined event",
-				"session_id", ss.ID,
-				"error", err,
-			)
-		}
-	}
-
-	s.logger.Info("Session enqueued",
-		"session_id", ss.ID,
-		"event_id", ss.EventID,
-		"position", pos,
-	)
+	s.l.Infof(ctx, "Session enqueued - id: %s, event_id: %s, position: %d", ss.ID, ss.EventID, pos)
 
 	return pos, nil
 }
 
-func (s *queueService) DequeueSession(ctx context.Context, eID, ssID string) error {
-	// Get session info before removing
-	ss, err := s.sessionRepo.Get(ctx, ssID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
-
+func (s *queueService) DequeueSession(ctx context.Context, eventID, sessionID string) error {
 	// Remove from queue
-	if err := s.queueRepo.RemoveFromQueue(ctx, eID, ssID); err != nil {
+	if err := s.repo.RemoveFromQueue(ctx, eventID, sessionID); err != nil {
 		return fmt.Errorf("failed to remove from queue: %w", err)
 	}
 
-	// Update session status
-	if err := s.sessionRepo.UpdateStatus(ctx, ssID, models.SessionStatusAbandoned); err != nil {
-		return fmt.Errorf("failed to update session status: %w", err)
-	}
-
-	// Publish QueueLeft event to Kafka
-	if s.prod != nil {
-		if err := s.prod.PublishQueueLeft(ctx, kafka.QueueLeftEvent{
-			SessionID: ssID,
-			UserID:    ss.UserID,
-			EventID:   eID,
-			Reason:    "user_left",
-			LeftAt:    ss.UpdatedAt,
-		}); err != nil {
-			s.logger.Error("Failed to publish queue left event",
-				"session_id", ssID,
-				"error", err,
-			)
-		}
-	}
-
-	s.logger.Info("Session dequeued",
-		"session_id", ssID,
-		"event_id", eID,
-	)
+	s.l.Infof(ctx, "Session dequeued - session_id: %s, event_id: %s", sessionID, eventID)
 
 	return nil
 }
 
-func (s *queueService) GetQueueStatus(ctx context.Context, ssID string) (QueueStatusOutput, error) {
-	ss, err := s.sessionRepo.Get(ctx, ssID)
-	if err != nil {
-		return QueueStatusOutput{}, err
-	}
-
-	resp := QueueStatusOutput{
-		SessionID: ss.ID,
-		Status:    ss.Status,
-		QueuedAt:  ss.QueuedAt,
-		ExpiresAt: ss.ExpiresAt,
+func (s *queueService) GetQueueStatus(ctx context.Context, sessionID string, session *models.Session) (*QueueStatusOutput, error) {
+	out := &QueueStatusOutput{
+		SessionID: session.ID,
+		Status:    session.Status,
+		QueuedAt:  session.QueuedAt,
+		ExpiresAt: session.ExpiresAt,
 	}
 
 	// If still queued, get current position and queue info
-	if ss.Status == models.SessionStatusQueued {
-		position, err := s.queueRepo.GetQueuePosition(ctx, ss.EventID, ss.ID)
+	if session.Status == models.SessionStatusQueued {
+		position, err := s.repo.GetQueuePosition(ctx, session.EventID, session.ID)
 		if err != nil {
-			return QueueStatusOutput{}, fmt.Errorf("failed to get queue position: %w", err)
+			return nil, fmt.Errorf("failed to get queue position: %w", err)
 		}
 
-		qLen, err := s.queueRepo.GetQueueLength(ctx, ss.EventID)
+		queueLength, err := s.repo.GetQueueLength(ctx, session.EventID)
 		if err != nil {
-			return QueueStatusOutput{}, fmt.Errorf("failed to get queue length: %w", err)
+			return nil, fmt.Errorf("failed to get queue length: %w", err)
 		}
 
-		resp.Position = position
-		resp.QueueLength = qLen
+		out.Position = position
+		out.QueueLength = queueLength
 	}
 
 	// If admitted, include checkout information
-	if ss.Status == models.SessionStatusAdmitted {
-		resp.CheckoutToken = ss.CheckoutToken
-		resp.CheckoutExpiresAt = ss.CheckoutExpiresAt
-		resp.AdmittedAt = ss.AdmittedAt
-		resp.CheckoutURL = "/checkout" // This would be configurable
+	if session.Status == models.SessionStatusAdmitted {
+		out.CheckoutToken = session.CheckoutToken
+		out.CheckoutExpiresAt = session.CheckoutExpiresAt
+		out.AdmittedAt = session.AdmittedAt
+		out.CheckoutURL = "/checkout" // This would be configurable
 	}
 
-	return resp, nil
+	return out, nil
 }
 
-func (s *queueService) GetQueueInfo(ctx context.Context, eID string) (*queue.QueueInfo, error) {
-	return s.queueManager.GetQueueInfo(ctx, eID)
+func (s *queueService) RemoveFromProcessing(ctx context.Context, eventID, sessionID string) error {
+	if err := s.repo.RemoveFromProcessing(ctx, eventID, sessionID); err != nil {
+		return fmt.Errorf("failed to remove from processing: %w", err)
+	}
+	return nil
+}
+
+func (s *queueService) GetProcessingCount(ctx context.Context, eventID string) (int64, error) {
+	return s.repo.GetProcessingCount(ctx, eventID)
+}
+
+func (s *queueService) GetQueueInfo(ctx context.Context, eID string) (*QueueInfoOutput, error) {
+	qLen, err := s.repo.GetQueueLength(ctx, eID)
+	if err != nil {
+		return nil, err
+	}
+
+	processingCount, err := s.repo.GetProcessingCount(ctx, eID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &QueueInfoOutput{
+		EventID:         eID,
+		QueueLength:     qLen,
+		ProcessingCount: processingCount,
+	}, nil
 }

@@ -7,8 +7,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/vogiaan1904/ticketbottle-waitroom/config"
-	"github.com/vogiaan1904/ticketbottle-waitroom/internal/errors"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	repo "github.com/vogiaan1904/ticketbottle-waitroom/internal/repository/redis"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
@@ -16,6 +16,8 @@ import (
 
 type SessionService interface {
 	CreateSession(ctx context.Context, uID, eID string, userAgent, ipAddr string) (*models.Session, error)
+	UpdateSession(ctx context.Context, ss *models.Session) error
+	UpdateSessionStatus(ctx context.Context, sessionID string, status models.SessionStatus) error
 	GetSession(ctx context.Context, ssID string) (*models.Session, error)
 	GenerateCheckoutToken(ctx context.Context, ss *models.Session) (string, error)
 	ValidateSession(ctx context.Context, ssID string) error
@@ -63,18 +65,35 @@ func (s *sessionService) CreateSession(ctx context.Context, uID, eID string, use
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	s.l.Info("Session created",
-		"session_id", ssID,
-		"user_id", uID,
-		"event_id", eID,
-	)
+	s.l.Infof(ctx, "Session created id: %s, user_id: %s, event_id: %s", ssID, uID, eID)
 
 	return ss, nil
+}
+
+func (s *sessionService) UpdateSession(ctx context.Context, ss *models.Session) error {
+	return s.repo.Update(ctx, ss)
+}
+
+func (s *sessionService) UpdateSessionStatus(ctx context.Context, sessionID string, status models.SessionStatus) error {
+	if err := s.repo.UpdateStatus(ctx, sessionID, status); err != nil {
+		if err == redis.Nil {
+			s.l.Warnf(ctx, "sessionService.UpdateSessionStatus: %v", ErrSessionNotFound)
+			return ErrSessionNotFound
+		}
+		s.l.Errorf(ctx, "sessionService.UpdateSessionStatus: %v", err)
+		return fmt.Errorf("failed to update session status: %w", err)
+	}
+	return nil
 }
 
 func (s *sessionService) GetSession(ctx context.Context, ssID string) (*models.Session, error) {
 	ss, err := s.repo.Get(ctx, ssID)
 	if err != nil {
+		if err == redis.Nil {
+			s.l.Warnf(ctx, "sessionService.GetSession: %v", ErrSessionNotFound)
+			return nil, ErrSessionNotFound
+		}
+		s.l.Errorf(ctx, "sessionService.GetSession: %v", err)
 		return nil, err
 	}
 
@@ -98,7 +117,7 @@ func (s *sessionService) GenerateCheckoutToken(ctx context.Context, ss *models.S
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 
-	s.l.Debug("Generated checkout token",
+	s.l.Debugf(ctx, "Generated checkout token",
 		"session_id", ss.ID,
 		"expires_at", expAt,
 	)
@@ -113,11 +132,11 @@ func (s *sessionService) ValidateSession(ctx context.Context, ssID string) error
 	}
 
 	if ss.IsExpired() {
-		return errors.ErrSessionExpired
+		return ErrSessionExpired
 	}
 
 	if !ss.IsActive() {
-		return errors.ErrInvalidSessionStatus
+		return ErrInvalidSessionStatus
 	}
 
 	return nil
