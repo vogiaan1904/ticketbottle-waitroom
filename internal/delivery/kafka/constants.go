@@ -1,11 +1,11 @@
 package kafka
 
 const (
-	TopicQueueReady  = "QUEUE_READY"
-	TopicQueueJoined = "QUEUE_JOINED"
-	TopicQueueLeft   = "QUEUE_LEFT"
+	TopicQueueReady  = "queue.ready"
+	TopicQueueJoined = "queue.joined"
+	TopicQueueLeft   = "queue.left"
 
-	TopicCheckoutCompleted = "CHECKOUT_COMPLETED"
-	TopicCheckoutFailed    = "CHECKOUT_FAILED"
-	TopicCheckoutExpired   = "CHECKOUT_EXPIRED"
+	TopicCheckoutCompleted = "checkout.completed"
+	TopicCheckoutFailed    = "checkout.failed"
+	TopicCheckoutExpired   = "checkout.expired"
 )

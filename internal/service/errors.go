@@ -11,4 +11,7 @@ var (
 	ErrQueueFull       = errors.New("queue is full")
 	ErrEventNotFound   = errors.New("event not found")
 	ErrQueueNotEnabled = errors.New("queue not enabled for this event")
+
+	ErrProcessorStopped = errors.New("queue processor has been stopped")
+	ErrEventNotActive   = errors.New("event is not active or not found")
 )

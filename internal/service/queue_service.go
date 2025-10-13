@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	repo "github.com/vogiaan1904/ticketbottle-waitroom/internal/repository/redis"
@@ -16,6 +17,9 @@ type QueueService interface {
 	GetQueueInfo(ctx context.Context, eventID string) (*QueueInfoOutput, error)
 	RemoveFromProcessing(ctx context.Context, eventID, sessionID string) error
 	GetProcessingCount(ctx context.Context, eventID string) (int64, error)
+	// New methods for queue processor
+	PopFromQueue(ctx context.Context, eventID string, count int) ([]string, error)
+	AddToProcessing(ctx context.Context, eventID, sessionID string, ttl time.Duration) error
 }
 
 type queueService struct {
@@ -34,18 +38,15 @@ func NewQueueService(
 }
 
 func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (int64, error) {
-	// Add to queue (Redis sorted set)
 	if err := s.repo.AddToQueue(ctx, ss.EventID, ss); err != nil {
 		return 0, fmt.Errorf("failed to add to queue: %w", err)
 	}
 
-	// Get position in queue
 	pos, err := s.repo.GetQueuePosition(ctx, ss.EventID, ss.ID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get queue position: %w", err)
 	}
 
-	// Update session object (caller will persist)
 	ss.Position = pos
 
 	s.l.Infof(ctx, "Session enqueued - id: %s, event_id: %s, position: %d", ss.ID, ss.EventID, pos)
@@ -72,7 +73,6 @@ func (s *queueService) GetQueueStatus(ctx context.Context, sessionID string, ses
 		ExpiresAt: session.ExpiresAt,
 	}
 
-	// If still queued, get current position and queue info
 	if session.Status == models.SessionStatusQueued {
 		position, err := s.repo.GetQueuePosition(ctx, session.EventID, session.ID)
 		if err != nil {
@@ -126,4 +126,19 @@ func (s *queueService) GetQueueInfo(ctx context.Context, eID string) (*QueueInfo
 		QueueLength:     qLen,
 		ProcessingCount: processingCount,
 	}, nil
+}
+
+func (s *queueService) PopFromQueue(ctx context.Context, eventID string, count int) ([]string, error) {
+	sessionIDs, err := s.repo.PopFromQueue(ctx, eventID, count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pop from queue: %w", err)
+	}
+	return sessionIDs, nil
+}
+
+func (s *queueService) AddToProcessing(ctx context.Context, eventID, sessionID string, ttl time.Duration) error {
+	if err := s.repo.AddToProcessing(ctx, eventID, sessionID, ttl); err != nil {
+		return fmt.Errorf("failed to add to processing: %w", err)
+	}
+	return nil
 }

@@ -21,6 +21,8 @@ type SessionService interface {
 	GetSession(ctx context.Context, ssID string) (*models.Session, error)
 	GenerateCheckoutToken(ctx context.Context, ss *models.Session) (string, error)
 	ValidateSession(ctx context.Context, ssID string) error
+	// New method for queue processor
+	UpdateCheckoutToken(ctx context.Context, sessionID string, token string, expAt time.Time) error
 }
 
 type sessionService struct {
@@ -81,7 +83,7 @@ func (s *sessionService) UpdateSessionStatus(ctx context.Context, sessionID stri
 			return ErrSessionNotFound
 		}
 		s.l.Errorf(ctx, "sessionService.UpdateSessionStatus: %v", err)
-		return fmt.Errorf("failed to update session status: %w", err)
+		return err
 	}
 	return nil
 }
@@ -139,5 +141,12 @@ func (s *sessionService) ValidateSession(ctx context.Context, ssID string) error
 		return ErrInvalidSessionStatus
 	}
 
+	return nil
+}
+
+func (s *sessionService) UpdateCheckoutToken(ctx context.Context, sessionID string, token string, expAt time.Time) error {
+	if err := s.repo.UpdateCheckoutToken(ctx, sessionID, token, expAt); err != nil {
+		return fmt.Errorf("failed to update checkout token: %w", err)
+	}
 	return nil
 }

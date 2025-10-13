@@ -81,7 +81,7 @@ func main() {
 	prod := producer.NewProducer(kafkaSyncProd, l)
 
 	// Initialize gRpc Service Clients
-	_, eventSvcClose, err := pkgGrpc.NewEventClient(cfg.Microservice.Event)
+	eventSvc, eventSvcClose, err := pkgGrpc.NewEventClient(cfg.Microservice.Event)
 	if err != nil {
 		l.Fatalf(ctx, "Failed to initialize gRpc event service client: %v", err)
 	}
@@ -90,11 +90,23 @@ func main() {
 	// Initialize services
 	ssSvc := service.NewSessionService(ssRepo, cfg.JWT, l)
 	qSvc := service.NewQueueService(qRepo, l)
-	wrSvc := service.NewWaitroomService(qSvc, ssSvc, prod, l)
+
+	// Initialize queue processor
+	queueProcessor := service.NewQueueProcessor(qSvc, ssSvc, eventSvc, prod, l, cfg.Queue)
+
+	// Initialize waitroom service with processor
+	wrSvc := service.NewWaitroomService(qSvc, ssSvc, eventSvc, prod, l, queueProcessor)
 
 	// Waitroom Consumer
 	cons := consumer.NewConsumer(kafkaConsGr, wrSvc, l)
 	cons.Start(ctx)
+
+	// Start Queue Processor
+	go func() {
+		if err := wrSvc.StartQueueProcessor(ctx); err != nil {
+			l.Errorf(ctx, "Failed to start queue processor: %v", err)
+		}
+	}()
 
 	// gRPC server
 	wrGrpcSvc := grpcSvc.NewWaitroomGrpcService(wrSvc, l)
@@ -121,6 +133,11 @@ func main() {
 	<-quit
 
 	l.Info(ctx, "Server shutting down...")
+
+	// Stop queue processor gracefully
+	if err := wrSvc.StopQueueProcessor(); err != nil {
+		l.Errorf(ctx, "Failed to stop queue processor: %v", err)
+	}
 
 	cancel()
 	time.Sleep(1 * time.Second)

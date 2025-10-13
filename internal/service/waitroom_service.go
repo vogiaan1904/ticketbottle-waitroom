@@ -8,6 +8,7 @@ import (
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/delivery/kafka/producer"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	pkgLog "github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
+	"github.com/vogiaan1904/ticketbottle-waitroom/protogen/event"
 )
 
 type WaitroomService interface {
@@ -17,30 +18,53 @@ type WaitroomService interface {
 	HandleCheckoutCompleted(ctx context.Context, in CheckoutCompletedInput) error
 	HandleCheckoutFailed(ctx context.Context, in CheckoutFailedInput) error
 	HandleCheckoutExpired(ctx context.Context, in CheckoutExpiredInput) error
+	// Queue processor methods
+	StartQueueProcessor(ctx context.Context) error
+	StopQueueProcessor() error
+	GetProcessorStatus() ProcessorStatus
 }
 
 type waitroomService struct {
 	qSvc  QueueService
 	ssSvc SessionService
+	eSvc  event.EventServiceClient
 	prod  producer.Producer
 	l     pkgLog.Logger
+	proc  QueueProcessor
 }
 
 func NewWaitroomService(
 	qSvc QueueService,
 	ssSvc SessionService,
+	eSvc event.EventServiceClient,
 	prod producer.Producer,
 	l pkgLog.Logger,
+	proc QueueProcessor,
 ) WaitroomService {
 	return &waitroomService{
 		qSvc:  qSvc,
 		ssSvc: ssSvc,
+		eSvc:  eSvc,
 		prod:  prod,
 		l:     l,
+		proc:  proc,
 	}
 }
 
 func (s *waitroomService) JoinQueue(ctx context.Context, in *JoinQueueInput) (*JoinQueueOutput, error) {
+	out, err := s.eSvc.FindOne(ctx, &event.FindOneEventRequest{
+		Id: in.EventID,
+	})
+	if err != nil {
+		s.l.Errorf(ctx, "service.waitroomService.JoinQueue: %v", err)
+		return nil, err
+	}
+
+	if out.Event == nil {
+		s.l.Warnf(ctx, "service.waitroomService.JoinQueue: %v", ErrEventNotFound)
+		return nil, ErrEventNotFound
+	}
+
 	ss, err := s.ssSvc.CreateSession(
 		ctx,
 		in.UserID,
@@ -87,7 +111,6 @@ func (s *waitroomService) JoinQueue(ctx context.Context, in *JoinQueueInput) (*J
 }
 
 func (s *waitroomService) GetQueueStatus(ctx context.Context, ssID string) (*QueueStatusOutput, error) {
-	// Step 1: Validate and get session (SessionService)
 	if err := s.ssSvc.ValidateSession(ctx, ssID); err != nil {
 		return nil, err
 	}
@@ -97,7 +120,6 @@ func (s *waitroomService) GetQueueStatus(ctx context.Context, ssID string) (*Que
 		return nil, err
 	}
 
-	// Step 2: Get queue status (qSvc uses session data)
 	stt, err := s.qSvc.GetQueueStatus(ctx, ssID, ss)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get queue status: %w", err)
@@ -238,4 +260,25 @@ func (s *waitroomService) HandleCheckoutExpired(ctx context.Context, in Checkout
 	)
 
 	return nil
+}
+
+func (s *waitroomService) StartQueueProcessor(ctx context.Context) error {
+	if s.proc == nil {
+		return fmt.Errorf("queue processor not initialized")
+	}
+	return s.proc.Start(ctx)
+}
+
+func (s *waitroomService) StopQueueProcessor() error {
+	if s.proc == nil {
+		return fmt.Errorf("queue processor not initialized")
+	}
+	return s.proc.Stop()
+}
+
+func (s *waitroomService) GetProcessorStatus() ProcessorStatus {
+	if s.proc == nil {
+		return ProcessorStatus{IsRunning: false}
+	}
+	return s.proc.GetStatus()
 }

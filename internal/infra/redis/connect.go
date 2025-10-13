@@ -31,6 +31,5 @@ func Disconnect(cli *redis.Client) {
 	}
 
 	cli.Close()
-
 	log.Println("Connection to Redis closed.")
 }
