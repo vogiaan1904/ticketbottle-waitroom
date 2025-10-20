@@ -49,7 +49,7 @@ func main() {
 	qRepo := repo.NewRedisQueueRepository(redisCli, l)
 
 	// Initialize Kafka producer
-	kafkaSyncProd, err := pkgKafka.NewProducer(pkgKafka.ProducerConfig{
+	kSyncProd, err := pkgKafka.NewProducer(pkgKafka.ProducerConfig{
 		Brokers:      cfg.Kafka.Brokers,
 		RetryMax:     cfg.Kafka.ProducerRetryMax,
 		RequiredAcks: cfg.Kafka.ProducerRequiredAcks,
@@ -58,13 +58,13 @@ func main() {
 		l.Fatalf(ctx, "Failed to initialize Kafka producer: %v", err)
 	}
 	defer func() {
-		if kafkaSyncProd != nil {
-			kafkaSyncProd.Close()
+		if kSyncProd != nil {
+			kSyncProd.Close()
 		}
 	}()
 
 	// Initialize Kafka consumer
-	kafkaConsGr, err := pkgKafka.NewConsumer(pkgKafka.ConsumerConfig{
+	kConsGrCli, err := pkgKafka.NewConsumer(pkgKafka.ConsumerConfig{
 		Brokers: cfg.Kafka.Brokers,
 		GroupID: cfg.Kafka.ConsumerGroupID,
 	})
@@ -72,13 +72,13 @@ func main() {
 		l.Fatalf(ctx, "Failed to initialize Kafka consumer: %v", err)
 	}
 	defer func() {
-		if kafkaConsGr != nil {
-			kafkaConsGr.Close()
+		if kConsGrCli != nil {
+			kConsGrCli.Close()
 		}
 	}()
 
 	// Queue Producer
-	prod := producer.NewProducer(kafkaSyncProd, l)
+	prod := producer.NewProducer(kSyncProd, l)
 
 	// Initialize gRpc Service Clients
 	eventSvc, eventSvcClose, err := pkgGrpc.NewEventClient(cfg.Microservice.Event)
@@ -98,7 +98,7 @@ func main() {
 	wrSvc := service.NewWaitroomService(qSvc, ssSvc, eventSvc, prod, l, queueProcessor)
 
 	// Waitroom Consumer
-	cons := consumer.NewConsumer(kafkaConsGr, wrSvc, l)
+	cons := consumer.NewConsumer(kConsGrCli, wrSvc, l)
 	cons.Start(ctx)
 
 	// Start Queue Processor
@@ -109,12 +109,12 @@ func main() {
 	}()
 
 	// gRPC server
-	wrGrpcSvc := grpcSvc.NewWaitroomGrpcService(wrSvc, l)
 	lnr, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Server.GRpcPort))
 	if err != nil {
 		l.Fatalf(ctx, "gRPC server failed to listen: %v", err)
 	}
 
+	wrGrpcSvc := grpcSvc.NewWaitroomGrpcService(wrSvc, l)
 	gRpcSrv := grpc.NewServer()
 	waitroompb.RegisterWaitroomServiceServer(gRpcSrv, wrGrpcSvc)
 

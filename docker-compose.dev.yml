@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 services:
   zookeeper:
     container_name: waitroom-zookeeper
@@ -22,7 +22,7 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-  
+
   kafka-ui:
     container_name: kafka-ui
     image: provectuslabs/kafka-ui:latest

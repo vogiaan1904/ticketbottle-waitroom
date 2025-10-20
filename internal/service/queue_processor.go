@@ -300,7 +300,6 @@ func (qp *queueProcessor) ProcessEventQueue(ctx context.Context, eventID string)
 }
 
 func (qp *queueProcessor) admitUserToCheckout(ctx context.Context, eventID, sessionID string) error {
-	// Retry mechanism for critical operations
 	return qp.withRetry(ctx, func() error {
 		return qp.doAdmitUserToCheckout(ctx, eventID, sessionID)
 	})
@@ -357,8 +356,6 @@ func (qp *queueProcessor) doAdmitUserToCheckout(ctx context.Context, eventID, se
 			"session_id", sessionID,
 			"error", err,
 		)
-		// Don't fail the admission for Kafka publishing errors
-		// The user is already admitted, we just couldn't notify other services
 	}
 
 	qp.logger.Info(ctx, "User admitted to checkout successfully",

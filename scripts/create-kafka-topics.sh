@@ -9,12 +9,14 @@ KAFKA_BROKER="localhost:9092"
 
 # Topics to create
 TOPICS=(
-  "QUEUE_READY:10:1"
-  "QUEUE_JOINED:5:1"
-  "QUEUE_LEFT:5:1"
-  "CHECKOUT_COMPLETED:10:1"
-  "CHECKOUT_FAILED:10:1"
-  "CHECKOUT_EXPIRED:10:1"
+  "queue.ready:10:1"
+  "queue.joined:5:1"
+  "queue.left:5:1"
+  "checkout.completed:10:1"
+  "checkout.failed:10:1"
+  "checkout.expired:10:1"
+  "payment.completed:10:1"
+  "payment.failed:10:1"
 )
 
 echo "Creating Kafka topics..."
