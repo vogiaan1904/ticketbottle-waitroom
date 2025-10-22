@@ -1275,7 +1275,7 @@ func (x *EventFilter) GetIsFree() bool {
 type FindManyEventRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Page          int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
-	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageSize      int64                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	Filter        *EventFilter           `protobuf:"bytes,3,opt,name=filter,proto3,oneof" json:"filter,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1318,7 +1318,7 @@ func (x *FindManyEventRequest) GetPage() int32 {
 	return 0
 }
 
-func (x *FindManyEventRequest) GetPageSize() int32 {
+func (x *FindManyEventRequest) GetPageSize() int64 {
 	if x != nil {
 		return x.PageSize
 	}
@@ -1387,9 +1387,10 @@ func (x *FindManyEventResponse) GetPagination() *PaginationInfo {
 type PaginationInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Page          int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
-	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	Count         int32                  `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	PageSize      int64                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	Count         int64                  `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
 	LastPage      int32                  `protobuf:"varint,4,opt,name=last_page,json=lastPage,proto3" json:"last_page,omitempty"`
+	Total         int64                  `protobuf:"varint,7,opt,name=total,proto3" json:"total,omitempty"`
 	HasNext       bool                   `protobuf:"varint,5,opt,name=has_next,json=hasNext,proto3" json:"has_next,omitempty"`
 	HasPrevious   bool                   `protobuf:"varint,6,opt,name=has_previous,json=hasPrevious,proto3" json:"has_previous,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1433,14 +1434,14 @@ func (x *PaginationInfo) GetPage() int32 {
 	return 0
 }
 
-func (x *PaginationInfo) GetPageSize() int32 {
+func (x *PaginationInfo) GetPageSize() int64 {
 	if x != nil {
 		return x.PageSize
 	}
 	return 0
 }
 
-func (x *PaginationInfo) GetCount() int32 {
+func (x *PaginationInfo) GetCount() int64 {
 	if x != nil {
 		return x.Count
 	}
@@ -1450,6 +1451,13 @@ func (x *PaginationInfo) GetCount() int32 {
 func (x *PaginationInfo) GetLastPage() int32 {
 	if x != nil {
 		return x.LastPage
+	}
+	return 0
+}
+
+func (x *PaginationInfo) GetTotal() int64 {
+	if x != nil {
+		return x.Total
 	}
 	return 0
 }
@@ -2609,19 +2617,20 @@ const file_event_proto_rawDesc = "" +
 	"\b_is_free\"\x83\x01\n" +
 	"\x14FindManyEventRequest\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12/\n" +
+	"\tpage_size\x18\x02 \x01(\x03R\bpageSize\x12/\n" +
 	"\x06filter\x18\x03 \x01(\v2\x12.event.EventFilterH\x00R\x06filter\x88\x01\x01B\t\n" +
 	"\a_filter\"t\n" +
 	"\x15FindManyEventResponse\x12$\n" +
 	"\x06events\x18\x01 \x03(\v2\f.event.EventR\x06events\x125\n" +
 	"\n" +
 	"pagination\x18\x02 \x01(\v2\x15.event.PaginationInfoR\n" +
-	"pagination\"\xb2\x01\n" +
+	"pagination\"\xc8\x01\n" +
 	"\x0ePaginationInfo\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x14\n" +
-	"\x05count\x18\x03 \x01(\x05R\x05count\x12\x1b\n" +
-	"\tlast_page\x18\x04 \x01(\x05R\blastPage\x12\x19\n" +
+	"\tpage_size\x18\x02 \x01(\x03R\bpageSize\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\x03R\x05count\x12\x1b\n" +
+	"\tlast_page\x18\x04 \x01(\x05R\blastPage\x12\x14\n" +
+	"\x05total\x18\a \x01(\x03R\x05total\x12\x19\n" +
 	"\bhas_next\x18\x05 \x01(\bR\ahasNext\x12!\n" +
 	"\fhas_previous\x18\x06 \x01(\bR\vhasPrevious\"N\n" +
 	"\x10ListEventRequest\x12/\n" +

@@ -80,7 +80,7 @@ protoc:
 	--go-grpc_out=$(OUT_DIR) --go-grpc_opt=paths=source_relative \
 	-I=protos-submodule $(PROTO)
 
-gen-proto:
+update-proto:
 	@echo "Updating git submodule..."
 	git submodule update --remote --recursive protos-submodule
 

@@ -75,7 +75,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env: getEnv("ENV", "development"),
 		Server: ServerConfig{
-			GRpcPort:     getEnvAsInt("SERVER_GRPC_PORT", 50054),
+			GRpcPort:     getEnvAsInt("SERVER_GRPC_PORT", 50056),
 			ReadTimeout:  getEnvAsDuration("SERVER_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout: getEnvAsDuration("SERVER_WRITE_TIMEOUT", 30*time.Second),
 			IdleTimeout:  getEnvAsDuration("SERVER_IDLE_TIMEOUT", 60*time.Second),
@@ -96,7 +96,7 @@ func Load() (*Config, error) {
 			PositionUpdateInterval: getEnvAsDuration("QUEUE_POSITION_UPDATE_INTERVAL", 5*time.Second),
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET", "your-super-secret-key-change-in-production"),
+			Secret: getEnv("JWT_SECRET", "jwt-secret"),
 			Expiry: getEnvAsDuration("JWT_EXPIRY", 15*time.Minute),
 		},
 		Log: LogConfig{
