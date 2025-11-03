@@ -18,10 +18,14 @@ type WaitroomService interface {
 	HandleCheckoutCompleted(ctx context.Context, in CheckoutCompletedInput) error
 	HandleCheckoutFailed(ctx context.Context, in CheckoutFailedInput) error
 	HandleCheckoutExpired(ctx context.Context, in CheckoutExpiredInput) error
+
 	// Queue processor methods
 	StartQueueProcessor(ctx context.Context) error
 	StopQueueProcessor() error
 	GetProcessorStatus() ProcessorStatus
+
+	// Real-time position streaming
+	StreamSessionPosition(ctx context.Context, sessionID string, updates chan<- *PositionStreamUpdate) error
 }
 
 type waitroomService struct {
@@ -281,4 +285,127 @@ func (s *waitroomService) GetProcessorStatus() ProcessorStatus {
 		return ProcessorStatus{IsRunning: false}
 	}
 	return s.proc.GetStatus()
+}
+
+func (s *waitroomService) StreamSessionPosition(ctx context.Context, ssID string, upds chan<- *PositionStreamUpdate) error {
+	if err := s.ssSvc.ValidateSession(ctx, ssID); err != nil {
+		return err
+	}
+
+	ss, err := s.ssSvc.GetSession(ctx, ssID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Send initial position update immediately
+	initUpd, err := s.buildPositionUpdate(ctx, ss)
+	if err != nil {
+		return fmt.Errorf("failed to build initial position update: %w", err)
+	}
+
+	select {
+	case upds <- initUpd:
+		s.l.Debug(ctx, "Sent initial position update",
+			"session_id", ssID,
+			"position", initUpd.Position,
+		)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// Subscribe to Redis Pub/Sub for position updates on this event
+	sub, err := s.qSvc.SubscribeToPositionUpdates(ctx, ss.EventID)
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to position updates: %w", err)
+	}
+	defer sub.Close()
+
+	s.l.Info(ctx, "Started streaming position updates",
+		"session_id", ssID,
+		"event_id", ss.EventID,
+	)
+
+	// Listen for updates on the channel
+	updCh := sub.Updates()
+	for {
+		select {
+		case <-ctx.Done():
+			s.l.Info(ctx, "Position stream closed by context",
+				"session_id", ssID,
+			)
+			return ctx.Err()
+
+		case event := <-updCh:
+			if event == nil {
+				// Channel closed
+				return nil
+			}
+
+			s.l.Debug(ctx, "Received position update event",
+				"session_id", ssID,
+				"update_type", event.UpdateType,
+			)
+
+			// Get updated session data
+			ss, err = s.ssSvc.GetSession(ctx, ssID)
+			if err != nil {
+				s.l.Errorf(ctx, "Failed to get session during stream: %v", err)
+				continue
+			}
+
+			// Build and send position update
+			upd, err := s.buildPositionUpdate(ctx, ss)
+			if err != nil {
+				s.l.Errorf(ctx, "Failed to build position update: %v", err)
+				continue
+			}
+
+			select {
+			case upds <- upd:
+				s.l.Debug(ctx, "Sent position update",
+					"session_id", ssID,
+					"position", upd.Position,
+					"status", upd.Status,
+				)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+
+			// If session is admitted, completed, failed, or expired, close the stream
+			if ss.Status != models.SessionStatusQueued {
+				s.l.Info(ctx, "Session status changed, closing stream",
+					"session_id", ssID,
+					"status", ss.Status,
+				)
+				return nil
+			}
+		}
+	}
+}
+
+func (s *waitroomService) buildPositionUpdate(ctx context.Context, ss *models.Session) (*PositionStreamUpdate, error) {
+	upd := &PositionStreamUpdate{
+		SessionID: ss.ID,
+		Status:    ss.Status,
+		UpdatedAt: ss.UpdatedAt,
+	}
+
+	// If session is queued, get current position
+	if ss.Status == models.SessionStatusQueued {
+		status, err := s.qSvc.GetQueueStatus(ctx, ss.ID, ss)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get queue status: %w", err)
+		}
+		upd.Position = status.Position
+		upd.QueueLength = status.QueueLength
+	}
+
+	// If session is admitted, include checkout information
+	if ss.Status == models.SessionStatusAdmitted {
+		upd.CheckoutToken = ss.CheckoutToken
+		upd.CheckoutURL = "/checkout" // This would be configurable
+		upd.CheckoutExpiresAt = ss.CheckoutExpiresAt
+	}
+
+	return upd, nil
 }

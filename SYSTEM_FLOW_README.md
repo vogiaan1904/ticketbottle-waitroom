@@ -1,111 +1,173 @@
 # TicketBottle Waitroom System Flow & Architecture
 
-## 📋 Current System Overview
+## 📋 System Overview
 
-Your waitroom service implements a **virtual queue system** for high-demand ticket sales using **Redis for queue management** and **Kafka for event streaming**. However, you're missing a crucial component: the **Queue Processor**.
+The waitroom service implements a **virtual queue system** for high-demand ticket sales using **Redis for queue management**, **Kafka for event streaming**, and **Redis Pub/Sub for real-time position updates**.
 
 ## 🏗️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    WAITROOM SERVICE                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │              │    │              │    │              │  │
-│  │ gRPC Server  │    │   Kafka      │    │   Kafka      │  │
-│  │  (Port 50051)│    │  Producer    │    │  Consumer    │  │
-│  │              │    │              │    │              │  │
-│  │ - JoinQueue  │    │ Publishes:   │    │ Consumes:    │  │
-│  │ - GetStatus  │    │ - JOINED     │    │ - COMPLETED  │  │
-│  │ - LeaveQueue │    │ - LEFT       │    │ - FAILED     │  │
-│  │              │    │ - READY ❌    │    │ - EXPIRED    │  │
-│  │              │    │              │    │              │  │
-│  └───────┬──────┘    └──────┬───────┘    └──────┬───────┘  │
-│          │                  │                   │           │
-│          └──────────────────┼───────────────────┘           │
-│                             │                               │
-│                    ┌────────▼────────┐                      │
-│                    │                 │                      │
-│                    │  Services Layer │                      │
-│                    │  - Queue        │                      │
-│                    │  - Session      │                      │
-│                    │  - Waitroom     │                      │
-│                    │                 │                      │
-│                    └────────┬────────┘                      │
-│                             │                               │
-│                    ┌────────▼────────┐                      │
-│                    │  Redis Storage  │                      │
-│                    │  - Sessions     │                      │
-│                    │  - Queues       │                      │
-│                    │  - Processing   │                      │
-│                    └─────────────────┘                      │
-│                                                               │
-│  ❌ MISSING: Queue Processor (Background Job)                │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                       WAITROOM SERVICE                                │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐           │
+│  │              │    │              │    │              │           │
+│  │ gRPC Server  │    │   Kafka      │    │   Kafka      │           │
+│  │  (Port 50056)│    │  Producer    │    │  Consumer    │           │
+│  │              │    │              │    │              │           │
+│  │ - JoinQueue  │    │ Publishes:   │    │ Consumes:    │           │
+│  │ - GetStatus  │    │ - JOINED ✅   │    │ - COMPLETED ✅│           │
+│  │ - LeaveQueue │    │ - LEFT ✅     │    │ - FAILED ✅   │           │
+│  │ - StreamPos  │    │ - READY ✅    │    │ - EXPIRED ✅  │           │
+│  │              │    │              │    │              │           │
+│  └───────┬──────┘    └──────┬───────┘    └──────┬───────┘           │
+│          │                  │                   │                    │
+│          └──────────────────┼───────────────────┘                    │
+│                             │                                        │
+│                    ┌────────▼────────┐                               │
+│                    │                 │                               │
+│                    │  Services Layer │                               │
+│                    │  - Queue        │                               │
+│                    │  - Session      │                               │
+│                    │  - Waitroom     │                               │
+│                    │  - Processor ✅  │                               │
+│                    │                 │                               │
+│                    └────────┬────────┘                               │
+│                             │                                        │
+│                    ┌────────▼────────┐                               │
+│                    │  Redis Storage  │                               │
+│                    │  - Sessions     │                               │
+│                    │  - Queues       │                               │
+│                    │  - Processing   │                               │
+│                    │  - Pub/Sub ✅    │                               │
+│                    └─────────────────┘                               │
+│                                                                        │
+│  ✅ Queue Processor: Running in background (every 1s)                │
+│  ✅ Real-time Streaming: gRPC + Redis Pub/Sub                        │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-## 🔄 Complete Flow (What SHOULD Happen)
+## 🔄 Complete System Flow
 
 ### 1. User Joins Queue ✅ (IMPLEMENTED)
 
 ```
-User → gRPC/HTTP → WaitroomService.JoinQueue()
+User → gRPC → WaitroomService.JoinQueue()
   ├─ SessionService.CreateSession() → Redis
   ├─ QueueService.EnqueueSession() → Redis Sorted Set
-  ├─ Producer.PublishQueueJoined() → Kafka
-  └─ Return position to user
+  ├─ Redis Pub/Sub: Publish position update (INTERNAL)
+  ├─ Kafka Producer: PublishQueueJoined() (EXTERNAL)
+  └─ Return: position, session_id, websocket_url
 ```
 
-### 2. ❌ Queue Processing (MISSING - The Problem!)
+**Files:**
+- [internal/service/waitroom_service.go](internal/service/waitroom_service.go) - JoinQueue()
+- [internal/service/queue_service.go:40-66](internal/service/queue_service.go#L40-L66) - EnqueueSession()
+- [internal/repository/redis/queue_repository.go](internal/repository/redis/queue_repository.go) - Redis operations
+
+### 2. Real-Time Position Streaming ✅ (IMPLEMENTED)
 
 ```
-Background Goroutine (Every 1-5 seconds):
-  ├─ Check available checkout slots
-  ├─ Get users from front of queue
-  ├─ Generate checkout tokens
-  ├─ Update sessions to "admitted" status
-  ├─ Add to processing set
-  └─ Producer.PublishQueueReady() → Kafka
+User → gRPC → StreamQueuePosition(session_id)
+  ├─ Validate session
+  ├─ Send initial position immediately
+  ├─ Subscribe to Redis Pub/Sub channel: queue:updates:{eventID}
+  └─ Stream position updates in real-time
+      ├─ On user join/leave → Position update
+      ├─ On admission → Checkout token + URL
+      └─ Auto-close when admitted/expired/completed
 ```
 
-### 3. User Gets Checkout Access ✅ (PARTIALLY IMPLEMENTED)
+**Files:**
+- [internal/delivery/grpc/waitroom_service.go:78-170](internal/delivery/grpc/waitroom_service.go#L78-L170) - StreamQueuePosition()
+- [internal/service/waitroom_service.go:290-418](internal/service/waitroom_service.go#L290-L418) - StreamSessionPosition()
+- [internal/models/position_update.go](internal/models/position_update.go) - Position update events
+
+**Redis Channels:**
+- Pattern: `queue:updates:{eventID}`
+- Example: `queue:updates:concert-2024`
+
+### 3. Queue Processing ✅ (IMPLEMENTED)
 
 ```
-User polls GetQueueStatus():
-  ├─ If status = "queued" → Show position
-  └─ If status = "admitted" → Show checkout token + URL
+Background Goroutine (Every 1 second):
+  ├─ Get active events from Event Service
+  ├─ For each event:
+  │   ├─ Check available checkout slots (max 100)
+  │   ├─ Calculate: available = maxConcurrent - processingCount
+  │   ├─ Pop N users from front of queue
+  │   ├─ For each user:
+  │   │   ├─ Generate JWT checkout token
+  │   │   ├─ Update session status to "admitted"
+  │   │   ├─ Add to processing set (15min TTL)
+  │   │   ├─ Redis Pub/Sub: Publish admitted update (INTERNAL)
+  │   │   └─ Kafka: PublishQueueReady() (EXTERNAL)
+  │   └─ Release batch (default: 10 users per batch)
+  └─ Repeat
 ```
 
-### 4. Checkout Process ✅ (IMPLEMENTED)
+**Files:**
+- [internal/service/queue_processor.go](internal/service/queue_processor.go) - Complete processor implementation
+- [cmd/api/main.go:105-109](cmd/api/main.go#L105-L109) - Processor startup
+- [cmd/api/main.go:138-140](cmd/api/main.go#L138-L140) - Graceful shutdown
+
+**Key Methods:**
+- `Start()` - Starts the background processor
+- `ProcessEventQueue()` - Processes a single event's queue
+- `admitUserToCheckout()` - Admits one user to checkout
+
+### 4. User Gets Checkout Access ✅ (IMPLEMENTED)
+
+```
+Option 1: Polling
+  User polls GetQueueStatus():
+    ├─ If status = "queued" → Show position
+    └─ If status = "admitted" → Show checkout token + URL
+
+Option 2: Streaming (Recommended)
+  User streams StreamQueuePosition():
+    ├─ Receives real-time position updates
+    └─ Receives admission notification with token
+```
+
+### 5. Checkout Process ✅ (IMPLEMENTED)
 
 ```
 Checkout Service receives QUEUE_READY event:
-  ├─ Reserve tickets for user
+  ├─ Validates JWT checkout token
+  ├─ Reserves tickets for user
   ├─ User completes payment
   └─ Publishes CHECKOUT_COMPLETED/FAILED/EXPIRED
 ```
 
-### 5. Cleanup & Next User ✅ (IMPLEMENTED)
+### 6. Cleanup & Next User ✅ (IMPLEMENTED)
 
 ```
-Waitroom consumes completion events:
+Waitroom consumes checkout completion events:
+  ├─ HandleCheckoutCompleted/Failed/Expired()
   ├─ Update session status
   ├─ Remove from processing set
-  └─ Free slot for next user (but no processor to admit them!)
+  ├─ Free slot for next user
+  └─ Processor automatically admits next user in queue
 ```
+
+**Files:**
+- [internal/delivery/kafka/consumer/consumer.go](internal/delivery/kafka/consumer/consumer.go)
+- [internal/service/waitroom_service.go](internal/service/waitroom_service.go) - HandleCheckout methods
 
 ## 🗄️ Redis Data Structures
 
-Your system uses **3 Redis data structures** per event:
+Your system uses **4 Redis data structures** per event:
 
-### 1. Sessions (Hash)
+### 1. Sessions (String with JSON)
 
 ```redis
-# Key: waitroom:session:{session_id}
+# Key: session:{session_id}
 # Value: JSON of session object
-HGET waitroom:session:abc-123
+# TTL: 2 hours
+GET session:abc-123
 
 {
   "id": "abc-123",
@@ -138,6 +200,7 @@ ZRANGE waitroom:concert-2024:queue 0 -1 WITHSCORES
 ```redis
 # Key: waitroom:{event_id}:processing
 # Members: session_ids of users currently in checkout
+# TTL: 15 minutes per member
 
 SMEMBERS waitroom:concert-2024:processing
 1) "session-xyz-789"  # User in checkout
@@ -145,244 +208,292 @@ SMEMBERS waitroom:concert-2024:processing
 # Max 100 concurrent users (configurable)
 ```
 
+### 4. Pub/Sub Channels (Ephemeral)
+
+```redis
+# Channel: queue:updates:{event_id}
+# Messages: PositionUpdateEvent (JSON)
+
+SUBSCRIBE queue:updates:concert-2024
+
+# Receives real-time updates when:
+# - User joins queue (user_joined)
+# - User leaves queue (user_left)
+# - User admitted to checkout (user_admitted)
+```
+
 ## 📨 Kafka Event Flow
 
 ### Events YOU Publish (Producer)
 
-- **QUEUE_JOINED** ✅ - When user joins queue
-- **QUEUE_LEFT** ✅ - When user leaves queue
-- **QUEUE_READY** ❌ - When user admitted to checkout (MISSING!)
+| Event | Topic | When | Purpose |
+|-------|-------|------|---------|
+| **QUEUE_JOINED** ✅ | `queue.joined` | User joins queue | Analytics, notifications, monitoring |
+| **QUEUE_LEFT** ✅ | `queue.left` | User leaves queue | Track abandonment rate |
+| **QUEUE_READY** ✅ | `queue.ready` | User admitted to checkout | Notify Checkout Service |
+
+**File:** [internal/delivery/kafka/producer/producer.go](internal/delivery/kafka/producer/producer.go)
 
 ### Events YOU Consume (Consumer)
 
-- **CHECKOUT_COMPLETED** ✅ - User completed purchase
-- **CHECKOUT_FAILED** ✅ - Payment failed
-- **CHECKOUT_EXPIRED** ✅ - 15-minute timeout
+| Event | Topic | When | Handler |
+|-------|-------|------|---------|
+| **CHECKOUT_COMPLETED** ✅ | `checkout.completed` | Payment success | Free slot, update session |
+| **CHECKOUT_FAILED** ✅ | `checkout.failed` | Payment failed | Free slot, mark failed |
+| **CHECKOUT_EXPIRED** ✅ | `checkout.expired` | 15-min timeout | Free slot, mark expired |
 
-## ❌ What's Missing: Queue Processor
+**File:** [internal/delivery/kafka/consumer/consumer.go](internal/delivery/kafka/consumer/consumer.go)
 
-You need a **background goroutine** that runs every 1-5 seconds:
+## 🎯 Redis Pub/Sub vs Kafka
 
-```go
-// MISSING IMPLEMENTATION
-func (s *waitroomService) StartQueueProcessor(ctx context.Context) {
-    ticker := time.NewTicker(time.Duration(s.cfg.Queue.ProcessInterval))
-    defer ticker.Stop()
+Both are used but serve **different purposes**:
 
-    for {
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            // Process all active events
-            events := s.getActiveEvents() // Get from event service
-            for _, eventID := range events {
-                s.processQueueForEvent(ctx, eventID)
-            }
-        }
-    }
-}
+### Redis Pub/Sub (Internal Real-Time)
+- **Scope:** Internal (within waitroom service)
+- **Purpose:** Real-time client streaming
+- **Consumers:** Active gRPC streams
+- **Latency:** ~1ms (instant)
+- **Durability:** ❌ Ephemeral (not stored)
+- **Use case:** Stream position updates to connected clients
 
-func (s *waitroomService) processQueueForEvent(ctx context.Context, eventID string) {
-    // 1. Check available slots
-    processingCount, _ := s.qSvc.GetProcessingCount(ctx, eventID)
-    maxConcurrent := 100 // From config
-    availableSlots := maxConcurrent - processingCount
+### Kafka Events (External Service-to-Service)
+- **Scope:** External (between microservices)
+- **Purpose:** Service-to-service communication
+- **Consumers:** Analytics, Notification, Admin services
+- **Latency:** ~5-50ms
+- **Durability:** ✅ Persistent (stored, replayable)
+- **Use case:** Notify other services about queue events
 
-    if availableSlots <= 0 {
-        return // No slots available
-    }
-
-    // 2. Get users from front of queue
-    sessionIDs, _ := s.qSvc.PopFromQueue(ctx, eventID, int(availableSlots))
-
-    for _, sessionID := range sessionIDs {
-        // 3. Generate checkout token
-        session, _ := s.ssSvc.GetSession(ctx, sessionID)
-        token, _ := s.ssSvc.GenerateCheckoutToken(ctx, session)
-
-        // 4. Update session
-        s.repo.UpdateCheckoutToken(ctx, sessionID, token, time.Now().Add(15*time.Minute))
-
-        // 5. Add to processing
-        s.qSvc.AddToProcessing(ctx, eventID, sessionID, 15*time.Minute)
-
-        // 6. Publish ready event
-        s.prod.PublishQueueReady(ctx, kafka.QueueReadyEvent{
-            SessionID:     sessionID,
-            UserID:        session.UserID,
-            EventID:       eventID,
-            CheckoutToken: token,
-            AdmittedAt:    time.Now(),
-            ExpiresAt:     time.Now().Add(15 * time.Minute),
-        })
-    }
-}
-```
-
-## 🎯 How Redis Queue Works
-
-### 1. **Joining Queue**
-
-```go
-// User joins → Added to sorted set with timestamp score
-ZADD waitroom:concert-2024:queue 1696248000 session-abc-123
-
-// Get position (0-indexed rank + 1)
-ZRANK waitroom:concert-2024:queue session-abc-123  // Returns 0
-// Position = 0 + 1 = 1 (first in line)
-```
-
-### 2. **Processing Queue**
-
-```go
-// Get next N users from front
-ZRANGE waitroom:concert-2024:queue 0 4  // Get first 5 users
-// Remove them from queue
-ZREM waitroom:concert-2024:queue session-abc-123 session-def-456
-
-// Add to processing set
-SADD waitroom:concert-2024:processing session-abc-123 session-def-456
-```
-
-### 3. **Completing Checkout**
-
-```go
-// Remove from processing when done
-SREM waitroom:concert-2024:processing session-abc-123
-// This frees up a slot for next user
-```
-
-## 🚀 How Kafka Events Work
-
-### 1. **Event Publishing**
-
-```go
-// When user joins queue
-producer.PublishQueueJoined(kafka.QueueJoinedEvent{
-    SessionID: "abc-123",
-    EventID:   "concert-2024",
-    Position:  42,
-    JoinedAt:  time.Now(),
-})
-
-// Message goes to Kafka topic: QUEUE_JOINED
-// Other services (analytics, notifications) consume it
-```
-
-### 2. **Event Consuming**
-
-```go
-// Checkout service publishes when payment completes
-producer.PublishCheckoutCompleted(CheckoutCompletedEvent{
-    SessionID: "abc-123",
-    UserID:   "user-456",
-    EventID:  "concert-2024",
-})
-
-// Your consumer receives it
-consumer.HandleCheckoutCompleted(event) {
-    // Remove from processing → Free slot for next user
-    queueService.RemoveFromProcessing(event.EventID, event.SessionID)
-
-    // Update session status
-    sessionService.UpdateSessionStatus(event.SessionID, "completed")
-}
-```
+**Both are necessary** - Redis for instant client updates, Kafka for reliable service communication.
 
 ## 🔧 Configuration
 
 Key config values that control queue behavior:
 
-```go
-// config/config.go
-type QueueConfig struct {
-    DefaultMaxConcurrent   int           // Max users in checkout (100)
-    DefaultReleaseRate     int           // Users admitted per batch (10)
-    ProcessInterval        time.Duration // How often to check queue (1s)
-    SessionTTL             time.Duration // Session expiry (2h)
-    PositionUpdateInterval time.Duration // Status polling rate (5s)
-}
+```bash
+# Queue Processing
+QUEUE_DEFAULT_MAX_CONCURRENT=100   # Max users in checkout per event
+QUEUE_DEFAULT_RELEASE_RATE=10      # Users admitted per batch
+QUEUE_PROCESS_INTERVAL=1s          # How often processor runs
+QUEUE_SESSION_TTL=7200s            # Session expiry (2 hours)
+
+# Real-Time Streaming
+QUEUE_POSITION_UPDATE_INTERVAL=5s  # Update broadcast frequency
+
+# Redis
+REDIS_ADDR=localhost:6379
+REDIS_POOL_SIZE=10
+
+# Kafka
+KAFKA_ENABLED=true
+KAFKA_BROKERS=localhost:9092
+KAFKA_CONSUMER_GROUP_ID=waitroom-service
+
+# gRPC Server
+SERVER_GRPC_PORT=50056
 ```
+
+**File:** [config/config.go](config/config.go)
 
 ## 🎯 Current Status Summary
 
-| Component           | Status         | Description                         |
-| ------------------- | -------------- | ----------------------------------- |
-| Join Queue          | ✅ Working     | Users can join, get position        |
-| Queue Storage       | ✅ Working     | Redis sorted set + sessions         |
-| Event Publishing    | ✅ Partial     | JOINED/LEFT work, READY missing     |
-| Event Consuming     | ✅ Working     | Handles checkout completion         |
-| **Queue Processor** | ❌ **Missing** | **Core issue - no admission logic** |
-| Checkout Tokens     | ✅ Implemented | JWT generation exists               |
-| Status Polling      | ✅ Working     | Users can check position            |
+| Component | Status | Description |
+| --- | --- | --- |
+| Join Queue | ✅ Complete | Users can join, get position |
+| Leave Queue | ✅ Complete | Users can leave queue |
+| Queue Storage | ✅ Complete | Redis sorted set + sessions |
+| **Queue Processor** | ✅ **Complete** | **Background job admits users** |
+| Checkout Tokens | ✅ Complete | JWT generation & validation |
+| Status Polling | ✅ Complete | Users can check position |
+| **Real-Time Streaming** | ✅ **Complete** | **gRPC streaming + Redis Pub/Sub** |
+| Kafka Producer | ✅ Complete | Publishes JOINED/LEFT/READY |
+| Kafka Consumer | ✅ Complete | Handles checkout completion |
+| Graceful Shutdown | ✅ Complete | Proper cleanup on exit |
 
-## 🛠️ Next Steps
+## 🚀 Testing the System
 
-1. **Implement Queue Processor** (Critical!)
-
-   - Background goroutine in main.go
-   - Periodic queue processing (every 1-5s)
-   - Admit users when slots available
-   - Publish QUEUE_READY events
-
-2. **Add Missing Service Interface**
-
-   ```go
-   type WaitroomService interface {
-       // ... existing methods ...
-       StartQueueProcessor(ctx context.Context) error  // ADD THIS
-       ProcessQueueForEvent(ctx context.Context, eventID string) error // ADD THIS
-   }
-   ```
-
-3. **Update Main Server**
-
-   ```go
-   // cmd/server/main.go
-   go func() {
-       wrSvc.StartQueueProcessor(ctx) // ADD THIS
-   }()
-   ```
-
-4. **Test Complete Flow**
-   - Join queue → Check processing starts
-   - Complete checkout → Check next user admitted
-   - Monitor Kafka events
-
-## 🚨 Why System Currently "Doesn't Work"
-
-Users join the queue and see their position, but **nobody ever gets admitted to checkout** because:
-
-1. ✅ Users join queue (position 1, 2, 3...)
-2. ❌ **No processor runs to admit them**
-3. ❌ **No QUEUE_READY events published**
-4. ❌ **Sessions stay in "queued" status forever**
-5. ❌ **Checkout service never gets notified**
-
-The queue just grows infinitely with nobody ever getting admitted!
-
-**Fix: Implement the Queue Processor background job.**
-
-## 📚 Testing the System
+### Prerequisites
 
 ```bash
-# Start services
-make docker-up
-make run
+# 1. Start infrastructure
+docker-compose up -d redis zookeeper kafka
 
-# Test joining queue
-grpcurl -plaintext -d '{"user_id":"user1","event_id":"concert1"}' \
-  localhost:50051 waitroom.v1.WaitroomService/JoinQueue
+# 2. Start waitroom service
+go run cmd/api/main.go
 
-# Check status (should show position)
-grpcurl -plaintext -d '{"session_id":"returned-session-id"}' \
-  localhost:50051 waitroom.v1.WaitroomService/GetQueueStatus
-
-# After implementing processor, status should change to "admitted"
-# with checkout_token populated
+# 3. Verify services
+docker ps
+# Should show: redis, zookeeper, kafka all running
 ```
+
+### Test 1: Join Queue and Check Status
+
+```bash
+# Join queue
+grpcurl -plaintext -d '{
+  "user_id": "user1",
+  "event_id": "concert-2024"
+}' localhost:50056 waitroom.v1.WaitroomService/JoinQueue
+
+# Response:
+{
+  "session_id": "session-abc-123",
+  "position": 1,
+  "queue_length": 1,
+  "queued_at": "2024-01-15T10:30:00Z",
+  "expires_at": "2024-01-15T12:30:00Z"
+}
+
+# Check status (poll)
+grpcurl -plaintext -d '{
+  "session_id": "session-abc-123"
+}' localhost:50056 waitroom.v1.WaitroomService/GetQueueStatus
+
+# Initially: status = "queued", position = 1
+# After processor runs: status = "admitted", checkout_token populated
+```
+
+### Test 2: Real-Time Position Streaming
+
+```bash
+# Start streaming (keeps connection open)
+grpcurl -plaintext -d '{
+  "session_id": "session-abc-123"
+}' localhost:50056 waitroom.v1.WaitroomService/StreamQueuePosition
+
+# Receives:
+# 1. Initial position update
+# 2. Updates when other users join/leave
+# 3. Admission notification with checkout token
+# 4. Stream closes automatically
+```
+
+### Test 3: Multiple Users
+
+```bash
+# Terminal 1: User 1 joins and streams
+grpcurl -plaintext -d '{"user_id":"user1","event_id":"concert1"}' \
+  localhost:50056 waitroom.v1.WaitroomService/JoinQueue
+
+grpcurl -plaintext -d '{"session_id":"session-1"}' \
+  localhost:50056 waitroom.v1.WaitroomService/StreamQueuePosition
+
+# Terminal 2: User 2 joins
+grpcurl -plaintext -d '{"user_id":"user2","event_id":"concert1"}' \
+  localhost:50056 waitroom.v1.WaitroomService/JoinQueue
+
+# Terminal 1 should receive position update showing queue_length = 2
+```
+
+### Test 4: Verify Redis Data
+
+```bash
+# Check queue
+redis-cli ZRANGE waitroom:concert-2024:queue 0 -1 WITHSCORES
+
+# Check processing set
+redis-cli SMEMBERS waitroom:concert-2024:processing
+
+# Monitor pub/sub
+redis-cli PSUBSCRIBE 'queue:updates:*'
+
+# Check session
+redis-cli GET session:abc-123
+```
+
+### Test 5: Verify Kafka Events
+
+```bash
+# Monitor Kafka topics
+kafka-console-consumer --bootstrap-server localhost:9092 \
+  --topic queue.joined --from-beginning
+
+kafka-console-consumer --bootstrap-server localhost:9092 \
+  --topic queue.ready --from-beginning
+```
+
+## 📊 System Metrics
+
+The queue processor tracks:
+- **IsRunning:** Processor status
+- **StartedAt:** When processor started
+- **LastProcessed:** Last processing timestamp
+- **EventsActive:** Number of events being processed
+- **TotalAdmitted:** Total users admitted to checkout
+- **ErrorCount:** Failed operations count
+
+Access via: `wrSvc.GetProcessorStatus()`
+
+## 🔍 Monitoring & Debugging
+
+### Check Processor Status
+
+```bash
+# View logs
+docker logs waitroom-service | grep -i "queue processor"
+
+# Should see:
+# - "Queue processor started"
+# - "Processing event queue" (every 1s)
+# - "Admitted user to checkout"
+```
+
+### Check Redis Health
+
+```bash
+redis-cli PING  # Should return PONG
+redis-cli INFO stats
+redis-cli PUBSUB CHANNELS 'queue:updates:*'
+```
+
+### Check Kafka Health
+
+```bash
+kafka-topics --bootstrap-server localhost:9092 --list
+# Should show: queue.joined, queue.left, queue.ready
+```
+
+## 📚 Key Files Reference
+
+### Core Services
+- [internal/service/waitroom_service.go](internal/service/waitroom_service.go) - Main service orchestration
+- [internal/service/queue_service.go](internal/service/queue_service.go) - Queue operations
+- [internal/service/session_service.go](internal/service/session_service.go) - Session management
+- [internal/service/queue_processor.go](internal/service/queue_processor.go) - Background processor ✅
+
+### Delivery Layer
+- [internal/delivery/grpc/waitroom_service.go](internal/delivery/grpc/waitroom_service.go) - gRPC handlers
+- [internal/delivery/kafka/producer/producer.go](internal/delivery/kafka/producer/producer.go) - Kafka producer
+- [internal/delivery/kafka/consumer/consumer.go](internal/delivery/kafka/consumer/consumer.go) - Kafka consumer
+
+### Repository Layer
+- [internal/repository/redis/queue_repository.go](internal/repository/redis/queue_repository.go) - Redis queue ops + Pub/Sub ✅
+- [internal/repository/redis/session_repository.go](internal/repository/redis/session_repository.go) - Redis session ops
+
+### Models
+- [internal/models/session.go](internal/models/session.go) - Session model
+- [internal/models/position_update.go](internal/models/position_update.go) - Position update events ✅
+
+### Main Entry Point
+- [cmd/api/main.go](cmd/api/main.go) - Server initialization
+
+## 🎉 System Status: Production Ready!
+
+✅ **All core functionality is implemented and working:**
+
+1. ✅ Queue management (join, leave, position tracking)
+2. ✅ Background queue processor (automatic admission)
+3. ✅ Real-time position streaming (gRPC + Redis Pub/Sub)
+4. ✅ Kafka event streaming (service-to-service)
+5. ✅ Checkout token generation & validation
+6. ✅ Graceful shutdown & error handling
+7. ✅ Comprehensive configuration
+8. ✅ Monitoring & metrics
+
+**The system is fully operational and ready for load testing!** 🚀
 
 ---
 
-**The missing Queue Processor is the key to making your system work!**
+For detailed real-time streaming implementation, see [STREAMING_IMPLEMENTATION_GUIDE.md](STREAMING_IMPLEMENTATION_GUIDE.md)
+
+For queue processor details, see [QUEUE_PROCESSOR_GUIDE.md](QUEUE_PROCESSOR_GUIDE.md)

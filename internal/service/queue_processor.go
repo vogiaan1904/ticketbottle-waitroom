@@ -358,6 +358,20 @@ func (qp *queueProcessor) doAdmitUserToCheckout(ctx context.Context, eventID, se
 		)
 	}
 
+	// 8. Broadcast position update to notify all sessions in queue
+	if err := qp.queueSvc.PublishPositionUpdate(ctx, &models.PositionUpdateEvent{
+		EventID:            eventID,
+		UpdateType:         models.UpdateTypeUserAdmitted,
+		AffectedSessionIDs: []string{sessionID},
+		Timestamp:          time.Now(),
+	}); err != nil {
+		qp.logger.Warn(ctx, "Failed to publish position update after admission",
+			"session_id", sessionID,
+			"error", err,
+		)
+		// Don't fail the request if pub/sub fails
+	}
+
 	qp.logger.Info(ctx, "User admitted to checkout successfully",
 		"session_id", sessionID,
 		"user_id", session.UserID,

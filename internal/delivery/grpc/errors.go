@@ -6,32 +6,32 @@ import (
 )
 
 var (
-	errSessionNotFound      = pkgErrors.NewGRPCError("WTR001", "Session not found")
-	errSessionExpired       = pkgErrors.NewGRPCError("WTR002", "Session expired")
-	errSessionAlreadyExists = pkgErrors.NewGRPCError("WTR003", "Session already exists")
-	errInvalidSessionStatus = pkgErrors.NewGRPCError("WTR004", "Invalid session status")
+	ErrSessionNotFound      = pkgErrors.NewGRPCError("WTR001", "Session not found")
+	ErrSessionExpired       = pkgErrors.NewGRPCError("WTR002", "Session expired")
+	ErrSessionAlreadyExists = pkgErrors.NewGRPCError("WTR003", "Session already exists")
+	ErrInvalidSessionStatus = pkgErrors.NewGRPCError("WTR004", "Invalid session status")
 
-	errQueueFull       = pkgErrors.NewGRPCError("WTR005", "Queue is full")
-	errEventNotFound   = pkgErrors.NewGRPCError("WTR006", "Event not found")
-	errQueueNotEnabled = pkgErrors.NewGRPCError("WTR007", "Queue is not enabled")
+	ErrQueueFull       = pkgErrors.NewGRPCError("WTR005", "Queue is full")
+	ErrEventNotFound   = pkgErrors.NewGRPCError("WTR006", "Event not found")
+	ErrQueueNotEnabled = pkgErrors.NewGRPCError("WTR007", "Queue is not enabled")
 )
 
-func (svc *WaitroomGrpcService) mapGRPCError(err error) error {
+func (svc *grpcService) mapGRPCError(err error) error {
 	switch err {
 	case service.ErrSessionNotFound:
-		return errSessionNotFound
+		return ErrSessionNotFound
 	case service.ErrSessionExpired:
-		return errSessionExpired
+		return ErrSessionExpired
 	case service.ErrSessionAlreadyExists:
-		return errSessionAlreadyExists
+		return ErrSessionAlreadyExists
 	case service.ErrInvalidSessionStatus:
-		return errInvalidSessionStatus
+		return ErrInvalidSessionStatus
 	case service.ErrQueueFull:
-		return errQueueFull
+		return ErrQueueFull
 	case service.ErrEventNotFound:
-		return errEventNotFound
+		return ErrEventNotFound
 	case service.ErrQueueNotEnabled:
-		return errQueueNotEnabled
+		return ErrQueueNotEnabled
 	default:
 		return err
 	}

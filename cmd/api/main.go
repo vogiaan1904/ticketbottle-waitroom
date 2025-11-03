@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/vogiaan1904/ticketbottle-waitroom/config"
-	grpcSvc "github.com/vogiaan1904/ticketbottle-waitroom/internal/delivery/grpc"
+	wrGrpc "github.com/vogiaan1904/ticketbottle-waitroom/internal/delivery/grpc"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/delivery/kafka/consumer"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/delivery/kafka/producer"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/infra/redis"
@@ -114,9 +114,9 @@ func main() {
 		l.Fatalf(ctx, "gRPC server failed to listen: %v", err)
 	}
 
-	wrGrpcSvc := grpcSvc.NewWaitroomGrpcService(wrSvc, l)
+	wrGrpc := wrGrpc.NewGrpcService(wrSvc, l)
 	gRpcSrv := grpc.NewServer()
-	waitroompb.RegisterWaitroomServiceServer(gRpcSrv, wrGrpcSvc)
+	waitroompb.RegisterWaitroomServiceServer(gRpcSrv, wrGrpc)
 
 	go func() {
 		l.Infof(ctx, "gRPC server is listening on port: %d", cfg.Server.GRpcPort)

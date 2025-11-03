@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,6 +22,9 @@ type QueueRepository interface {
 	RemoveFromProcessing(ctx context.Context, eID, ssID string) error
 	GetProcessingCount(ctx context.Context, eID string) (int64, error)
 	IsProcessing(ctx context.Context, eID, ssID string) (bool, error)
+	// Pub/Sub methods for real-time position updates
+	PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error
+	SubscribeToPositionUpdates(ctx context.Context, eID string) (*redis.PubSub, error)
 }
 
 type redisQueueRepository struct {
@@ -217,10 +221,60 @@ func (r *redisQueueRepository) IsProcessing(ctx context.Context, eID, ssID strin
 	return exists, nil
 }
 
+func (r *redisQueueRepository) PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error {
+	channel := r.positionUpdateChannel(update.EventID)
+
+	// Marshal the update event to JSON
+	payload, err := json.Marshal(update)
+	if err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.PublishPositionUpdate: failed to marshal update: %v", err)
+		return fmt.Errorf("failed to marshal position update: %w", err)
+	}
+
+	// Publish to Redis channel
+	if err := r.cli.Publish(ctx, channel, payload).Err(); err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.PublishPositionUpdate: %v", err)
+		return fmt.Errorf("failed to publish position update: %w", err)
+	}
+
+	r.l.Debugf(ctx, "Published position update",
+		"event_id", update.EventID,
+		"update_type", update.UpdateType,
+		"channel", channel,
+	)
+
+	return nil
+}
+
+func (r *redisQueueRepository) SubscribeToPositionUpdates(ctx context.Context, eID string) (*redis.PubSub, error) {
+	channel := r.positionUpdateChannel(eID)
+
+	// Create a new pub/sub subscription
+	pubsub := r.cli.Subscribe(ctx, channel)
+
+	// Wait for confirmation that subscription is created
+	_, err := pubsub.Receive(ctx)
+	if err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.SubscribeToPositionUpdates: %v", err)
+		return nil, fmt.Errorf("failed to subscribe to position updates: %w", err)
+	}
+
+	r.l.Debugf(ctx, "Subscribed to position updates",
+		"event_id", eID,
+		"channel", channel,
+	)
+
+	return pubsub, nil
+}
+
 func (r *redisQueueRepository) queueKey(eID string) string {
 	return fmt.Sprintf("waitroom:%s:queue", eID)
 }
 
 func (r *redisQueueRepository) processingKey(eID string) string {
 	return fmt.Sprintf("waitroom:%s:processing", eID)
+}
+
+func (r *redisQueueRepository) positionUpdateChannel(eID string) string {
+	return fmt.Sprintf("queue:updates:%s", eID)
 }
