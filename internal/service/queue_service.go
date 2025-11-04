@@ -69,7 +69,6 @@ func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (
 		Timestamp:          time.Now(),
 	}); err != nil {
 		s.l.Warnf(ctx, "Failed to publish position update after enqueue: %v", err)
-		// Don't fail the request if pub/sub fails
 	}
 
 	return pos, nil

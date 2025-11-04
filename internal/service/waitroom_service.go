@@ -215,7 +215,6 @@ func (s *waitroomService) HandleCheckoutFailed(ctx context.Context, in CheckoutF
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
-	// Step 2: Remove from processing (qSvc)
 	if err := s.qSvc.RemoveFromProcessing(ctx, in.EventID, in.SessionID); err != nil {
 		s.l.Errorf(ctx, "Failed to remove from processing",
 			"session_id", in.SessionID,
