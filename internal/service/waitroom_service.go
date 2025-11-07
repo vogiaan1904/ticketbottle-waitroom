@@ -9,6 +9,7 @@ import (
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	pkgLog "github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
 	"github.com/vogiaan1904/ticketbottle-waitroom/protogen/event"
+	"golang.org/x/sync/errgroup"
 )
 
 type WaitroomService interface {
@@ -56,17 +57,44 @@ func NewWaitroomService(
 }
 
 func (s *waitroomService) JoinQueue(ctx context.Context, in *JoinQueueInput) (*JoinQueueOutput, error) {
-	out, err := s.eSvc.FindOne(ctx, &event.FindOneEventRequest{
-		Id: in.EventID,
+	var eCfg *event.EventConfig
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		out, err := s.eSvc.FindOne(gCtx, &event.FindOneEventRequest{
+			Id: in.EventID,
+		})
+		if err != nil {
+			return err
+		}
+		if out.Event == nil {
+			return ErrEventNotFound
+		}
+		return nil
 	})
-	if err != nil {
+
+	g.Go(func() error {
+		cfgOut, err := s.eSvc.GetConfig(gCtx, &event.GetEventConfigRequest{
+			EventId: in.EventID,
+		})
+		if err != nil {
+			return err
+		}
+		if cfgOut.EventConfig == nil {
+			return ErrEventConfigNotFound
+		}
+		eCfg = cfgOut.EventConfig
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		s.l.Errorf(ctx, "service.waitroomService.JoinQueue: %v", err)
 		return nil, err
 	}
 
-	if out.Event == nil {
-		s.l.Warnf(ctx, "service.waitroomService.JoinQueue: %v", ErrEventNotFound)
-		return nil, ErrEventNotFound
+	if !eCfg.AllowWaitRoom {
+		s.l.Warnf(ctx, "service.waitroomService.JoinQueue: %v", ErrWaitRoomNotAllowed)
+		return nil, ErrWaitRoomNotAllowed
 	}
 
 	ss, err := s.ssSvc.CreateSession(

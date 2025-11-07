@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
+	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/redis"
 )
 
 type SessionRepository interface {
@@ -44,7 +44,7 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 	}
 
 	// Use pipeline for atomic operation
-	pipe := r.cli.Pipeline()
+	pipe := r.cli.GetClient().Pipeline()
 	pipe.Set(ctx, key, data, 2*time.Hour)
 
 	// Create user->session index
@@ -68,7 +68,7 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 func (r *redisSessionRepository) Get(ctx context.Context, ssID string) (*models.Session, error) {
 	key := r.sessionKey(ssID)
 
-	data, err := r.cli.Get(ctx, key).Bytes()
+	data, err := r.cli.Get(ctx, key)
 	if err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.Get: %v", err)
 		return nil, err
@@ -95,7 +95,7 @@ func (r *redisSessionRepository) Update(ctx context.Context, ss *models.Session)
 	}
 
 	// Get current TTL to preserve it
-	ttl, err := r.cli.TTL(ctx, key).Result()
+	ttl, err := r.cli.TTL(ctx, key)
 	if err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
 		return err
@@ -105,7 +105,7 @@ func (r *redisSessionRepository) Update(ctx context.Context, ss *models.Session)
 		ttl = 2 * time.Hour
 	}
 
-	if err := r.cli.Set(ctx, key, data, ttl).Err(); err != nil {
+	if err := r.cli.Set(ctx, key, data, ttl); err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
 		return err
 	}
@@ -165,7 +165,7 @@ func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error 
 		return err
 	}
 
-	pipe := r.cli.Pipeline()
+	pipe := r.cli.GetClient().Pipeline()
 
 	// Delete session
 	pipe.Del(ctx, r.sessionKey(ssID))
@@ -186,7 +186,7 @@ func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error 
 func (r *redisSessionRepository) GetByUserAndEvent(ctx context.Context, uID, eID string) (*models.Session, error) {
 	ueKey := r.userEventKey(uID, eID)
 
-	ssID, err := r.cli.Get(ctx, ueKey).Result()
+	ssID, err := r.cli.GetString(ctx, ueKey)
 	if err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.GetByUserAndEvent: %v", err)
 		return nil, err
@@ -197,7 +197,7 @@ func (r *redisSessionRepository) GetByUserAndEvent(ctx context.Context, uID, eID
 
 func (r *redisSessionRepository) Exists(ctx context.Context, ssID string) (bool, error) {
 	key := r.sessionKey(ssID)
-	exists, err := r.cli.Exists(ctx, key).Result()
+	exists, err := r.cli.Exists(ctx, key)
 	if err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.Exists: %v", err)
 		return false, err

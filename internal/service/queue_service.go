@@ -22,6 +22,7 @@ type QueueService interface {
 	// New methods for queue processor
 	PopFromQueue(ctx context.Context, eventID string, count int) ([]string, error)
 	AddToProcessing(ctx context.Context, eventID, sessionID string, ttl time.Duration) error
+	GetActiveEvents(ctx context.Context) ([]string, error)
 	// Position update broadcasting and streaming
 	PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error
 	SubscribeToPositionUpdates(ctx context.Context, eventID string) (PositionUpdateSubscription, error)
@@ -59,6 +60,12 @@ func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (
 
 	ss.Position = pos
 
+	// Mark event as active (idempotent operation)
+	if err := s.repo.AddActiveEvent(ctx, ss.EventID); err != nil {
+		s.l.Warnf(ctx, "Failed to mark event as active: %v", err)
+		// Don't fail the enqueue operation
+	}
+
 	s.l.Infof(ctx, "Session enqueued - id: %s, event_id: %s, position: %d", ss.ID, ss.EventID, pos)
 
 	// Broadcast position update to all sessions in this event's queue
@@ -81,6 +88,19 @@ func (s *queueService) DequeueSession(ctx context.Context, eventID, sessionID st
 	}
 
 	s.l.Infof(ctx, "Session dequeued - session_id: %s, event_id: %s", sessionID, eventID)
+
+	// Check if queue is now empty and remove from active events if so
+	queueLength, err := s.repo.GetQueueLength(ctx, eventID)
+	if err != nil {
+		s.l.Warnf(ctx, "Failed to check queue length after dequeue: %v", err)
+	} else if queueLength == 0 {
+		// Queue is empty, remove from active events
+		if err := s.repo.RemoveActiveEvent(ctx, eventID); err != nil {
+			s.l.Warnf(ctx, "Failed to remove event from active set: %v", err)
+		} else {
+			s.l.Infof(ctx, "Event queue is empty, removed from active events - event_id: %s", eventID)
+		}
+	}
 
 	// Broadcast position update to all remaining sessions in this event's queue
 	if err := s.repo.PublishPositionUpdate(ctx, &models.PositionUpdateEvent{
@@ -172,6 +192,14 @@ func (s *queueService) AddToProcessing(ctx context.Context, eventID, sessionID s
 		return fmt.Errorf("failed to add to processing: %w", err)
 	}
 	return nil
+}
+
+func (s *queueService) GetActiveEvents(ctx context.Context) ([]string, error) {
+	events, err := s.repo.GetActiveEvents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active events: %w", err)
+	}
+	return events, nil
 }
 
 func (s *queueService) PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error {

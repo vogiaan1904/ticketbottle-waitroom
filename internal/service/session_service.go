@@ -7,11 +7,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+
 	"github.com/vogiaan1904/ticketbottle-waitroom/config"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	repo "github.com/vogiaan1904/ticketbottle-waitroom/internal/repository/redis"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
+	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/redis"
 )
 
 type SessionService interface {

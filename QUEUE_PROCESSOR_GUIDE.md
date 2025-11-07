@@ -2,351 +2,218 @@
 
 ## 🚀 Overview
 
-The Queue Processor is the **heart** of the waitroom system. It's responsible for **admitting users from the queue to checkout** when slots become available.
+The Queue Processor automatically admits users from the queue to checkout when slots become available. It uses **Redis-based event discovery** - no manual configuration required!
+
+## ⚡ Quick Start
+
+**Zero Configuration:**
+1. Start the service → Processor runs automatically
+2. User joins queue → Event added to `waitroom:active_events`
+3. Processor detects event → Admits users every 1s
+4. Queue becomes empty → Event auto-removed
+5. Repeat for all events!
 
 ## 🏗️ Architecture
 
+### System Flow
+
 ```mermaid
 graph TB
-    A[Queue Processor] --> B[Check Processing Count]
-    B --> C{Slots Available?}
-    C -->|No| D[Wait for Next Cycle]
-    C -->|Yes| E[Pop Users from Queue]
-    E --> F[For Each User]
-    F --> G[Generate Checkout Token]
-    G --> H[Update Session Status]
-    H --> I[Add to Processing Set]
-    I --> J[Publish QUEUE_READY Event]
-    J --> K[Checkout Service Notified]
-    D --> L[Next Tick]
-    L --> B
+    A[Queue Processor] --> B[Get Active Events from Redis]
+    B --> C{Events with Queues?}
+    C -->|No| D[Wait 1s]
+    C -->|Yes| E[For Each Event]
+    E --> F[Check Available Slots]
+    F --> G{Slots Available?}
+    G -->|No| D
+    G -->|Yes| H[Pop Users from Queue]
+    H --> I[Generate Checkout Token]
+    I --> J[Update Session Status]
+    J --> K[Add to Processing Set]
+    K --> L[Publish QUEUE_READY Event]
+    L --> D
 ```
 
-## 📋 Key Features
+### Redis-Based Event Discovery
 
-### ✅ **Production-Ready Features**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Redis: waitroom:active_events (Set)                        │
+│  Members: {event_uuid_1, event_uuid_2, ...}                │
+│  Operations: O(1) add/remove/check                          │
+└─────────────────────────────────────────────────────────────┘
+            ↑                                    ↓
+    ┌───────┴────────────┐            ┌─────────┴────────────┐
+    │ EnqueueSession()   │            │ DequeueSession()     │
+    │ → Add to set       │            │ → Check if empty     │
+    │   (idempotent)     │            │ → Remove if empty    │
+    └────────────────────┘            └──────────────────────┘
 
-- **Graceful startup/shutdown** with timeout
-- **Retry mechanism** with exponential backoff
-- **Error handling** without stopping the entire process
-- **Metrics collection** (admitted count, error count)
-- **Configurable parameters** (batch size, intervals, timeouts)
-- **Thread-safe** operations with proper locking
-- **Context-aware** with cancellation support
-- **Atomic operations** for session updates
+┌─────────────────────────────────────────────────────────────┐
+│  Queue Processor (every 1s)                                 │
+│  1. Get active events from Redis                            │
+│  2. Process each event's queue                              │
+│  3. Admit users to checkout                                 │
+│  4. Auto-cleanup empty queues                               │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### 🔧 **Configuration Options**
+### Timeline Example
 
-- `ProcessInterval`: How often to check queues (default: 1s)
-- `MaxConcurrentPerEvent`: Max users in checkout per event (default: 100)
-- `BatchSize`: Max users to admit per cycle (default: 10)
-- `RetryAttempts`: Retries for failed operations (default: 3)
-- `ShutdownTimeout`: Max graceful shutdown time (default: 30s)
+```
+Time  Action                         Active Events      Queue Length
+─────────────────────────────────────────────────────────────────────
+T0    System starts                  {}                 event-A: 0
+T1    User joins event-A             {event-A}          event-A: 1
+T2    5 more users join              {event-A}          event-A: 6
+T3    Processor admits 3             {event-A}          event-A: 3
+T4    User joins event-B             {event-A, B}       event-A: 3, B: 1
+T5    Event-A queue empty            {event-B}          event-A: 0 (removed!)
+T6    Processor checks event-B only  {event-B}          event-B: 1
+```
 
 ## 🔄 Processing Flow
 
-### 1. **Initialization**
+### Main Loop (Every 1 Second)
 
 ```go
-processor := NewQueueProcessor(
-    queueService,     // Queue operations
-    sessionService,   // Session management
-    eventService,     // Get active events
-    kafkaProducer,    // Event publishing
-    logger,           // Logging
-    config,           // Configuration
-)
+1. GetActiveEvents() from Redis
+   ↓
+2. For each active event:
+   ├─ Get processing count (users in checkout)
+   ├─ Calculate available slots (max 100 - current)
+   ├─ Pop users from queue (batch of 10)
+   └─ For each user:
+      ├─ Generate JWT checkout token
+      ├─ Update session status to "admitted"
+      ├─ Add to processing set (15min TTL)
+      └─ Publish QUEUE_READY Kafka event
 ```
 
-### 2. **Main Processing Loop**
+### Error Handling
 
-```go
-Every 1 second (configurable):
-├─ Get active events
-├─ For each event:
-│  ├─ Check processing count (how many users in checkout)
-│  ├─ Calculate available slots (max 100 - current processing)
-│  ├─ Pop users from queue (batch of 10)
-│  └─ For each user:
-│     ├─ Generate JWT checkout token
-│     ├─ Update session status to "admitted"
-│     ├─ Add to processing set
-│     └─ Publish QUEUE_READY event
-└─ Sleep until next cycle
+- **User fails**: Skip, continue with next user
+- **Event fails**: Skip, continue with next event
+- **Retry**: 3 attempts with exponential backoff
+- **System errors**: Log and continue processing
+
+## 📊 Redis Data Structures
+
+### Complete Schema
+
+```
+waitroom:active_events                    → Set of event IDs with queues
+waitroom:{event_id}:queue                 → Sorted set (users waiting)
+waitroom:{event_id}:processing            → Set (users in checkout)
+waitroom:session:{session_id}             → JSON (session data)
+waitroom:user_session:{user}:{event}      → String (session ID index)
+queue:updates:{event_id}                  → Pub/Sub channel
 ```
 
-### 3. **Error Handling**
+### Data Flow
 
-- **User-level errors**: Skip failed user, continue with next
-- **Event-level errors**: Skip failed event, continue with next
-- **System-level errors**: Log error, continue processing
-- **Retry mechanism**: 3 attempts with exponential backoff
+```bash
+# 1. User joins queue
+SADD waitroom:active_events "event-123"
+ZADD waitroom:event-123:queue 1699999999 "session-abc"
+SET waitroom:session:abc '{"status":"queued",...}'
 
-## 📊 Redis Data Flow
+# 2. Processor admits user
+ZPOPMIN waitroom:event-123:queue
+SADD waitroom:event-123:processing "session-abc"
+SET waitroom:session:abc '{"status":"admitted",...}'
+PUBLISH queue:updates:event-123 '{"type":"admitted"}'
 
-### Before Processing
-
-```redis
-# Queue (sorted set) - Users waiting
-ZRANGE waitroom:concert-2024:queue 0 -1
-1) "session-abc"
-2) "session-def"
-3) "session-ghi"
-
-# Processing (set) - Users in checkout
-SMEMBERS waitroom:concert-2024:processing
-1) "session-xyz" (50 users currently)
-
-# Session - Individual user state
-HGET waitroom:session:abc
-{
-  "status": "queued",
-  "checkout_token": "",
-  "position": 1
-}
+# 3. Last user processed → cleanup
+ZCARD waitroom:event-123:queue            # Returns: 0
+SREM waitroom:active_events "event-123"   # Auto-remove
 ```
-
-### After Processing (User Admitted)
-
-```redis
-# Queue - User removed from front
-ZRANGE waitroom:concert-2024:queue 0 -1
-1) "session-def"  # abc moved to checkout
-2) "session-ghi"
-
-# Processing - User added
-SMEMBERS waitroom:concert-2024:processing
-1) "session-xyz"
-2) "session-abc"  # ← Added (51 users now)
-
-# Session - Updated with token
-HGET waitroom:session:abc
-{
-  "status": "admitted",           # ← Changed
-  "checkout_token": "jwt-token",  # ← Added
-  "admitted_at": "2024-10-13T10:35:00Z",
-  "checkout_expires_at": "2024-10-13T10:50:00Z"
-}
-```
-
-## 📨 Kafka Event Flow
-
-### Published Event
-
-```json
-Topic: QUEUE_READY
-{
-  "session_id": "session-abc",
-  "user_id": "user-123",
-  "event_id": "concert-2024",
-  "checkout_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "admitted_at": "2024-10-13T10:35:00Z",
-  "expires_at": "2024-10-13T10:50:00Z",
-  "timestamp": "2024-10-13T10:35:00.123Z"
-}
-```
-
-### What Happens Next
-
-1. **Checkout Service** consumes the event
-2. **Reserves tickets** for the user (15-minute hold)
-3. **User polls status** → Gets checkout token + URL
-4. **User accesses checkout** → Validates JWT token
-5. **User completes payment** → Publishes completion event
-6. **Waitroom consumes completion** → Removes from processing
-7. **Next cycle** → Admits more users to fill the slot
 
 ## ⚙️ Configuration
 
-### Environment Variables
-
-```bash
-# Queue Processor Settings
-QUEUE_PROCESS_INTERVAL=1s           # How often to process
-QUEUE_DEFAULT_MAX_CONCURRENT=100    # Max users in checkout
-QUEUE_DEFAULT_RELEASE_RATE=10       # Users per batch
-QUEUE_SESSION_TTL=2h               # Session expiry
-```
-
-### Code Configuration
-
 ```go
 ProcessorConfig{
-    ProcessInterval:        1 * time.Second,    // Check every second
-    MaxConcurrentPerEvent:  100,                // Max 100 in checkout
-    BatchSize:              10,                 // Admit up to 10 per cycle
-    RetryAttempts:          3,                  // Retry failed operations
-    RetryDelay:             1 * time.Second,    // Delay between retries
-    ShutdownTimeout:        30 * time.Second,   // Graceful shutdown time
-    MaxProcessingDuration:  30 * time.Second,   // Max time per cycle
+    ProcessInterval:        1 * time.Second,   // Check frequency
+    MaxConcurrentPerEvent:  100,               // Max in checkout
+    BatchSize:              10,                // Users per cycle
+    RetryAttempts:          3,                 // Retry count
+    ShutdownTimeout:        30 * time.Second,  // Graceful shutdown
 }
 ```
 
-## 🔍 Monitoring & Debugging
+## 🔍 Monitoring
 
-### Status Check
+### Check Active Events
 
-```go
-status := processor.GetStatus()
-fmt.Printf("Running: %v\n", status.IsRunning)
-fmt.Printf("Started: %v\n", status.StartedAt)
-fmt.Printf("Last Processed: %v\n", status.LastProcessed)
-fmt.Printf("Total Admitted: %d\n", status.TotalAdmitted)
-fmt.Printf("Error Count: %d\n", status.ErrorCount)
+```bash
+# View active events
+redis-cli SMEMBERS waitroom:active_events
+
+# Check specific event
+redis-cli ZCARD waitroom:{EVENT_ID}:queue
+redis-cli SCARD waitroom:{EVENT_ID}:processing
+
+# Real-time monitoring
+redis-cli MONITOR
 ```
 
-### Log Messages
+### Logs
 
 ```
 INFO  Queue processor started successfully
-DEBUG Processing queues for active events event_count=2
-DEBUG Processing queue batch event_id=concert-2024 batch_size=5
-INFO  Admitting users to checkout event_id=concert-2024 user_count=5
-INFO  User admitted to checkout successfully session_id=abc user_id=123
-INFO  Batch processing completed event_id=concert-2024 attempted=5 admitted=5
-```
-
-### Redis Monitoring
-
-```bash
-# Check queue length
-redis-cli ZCARD waitroom:concert-2024:queue
-
-# Check processing count
-redis-cli SCARD waitroom:concert-2024:processing
-
-# Check specific session
-redis-cli HGET waitroom:session:abc status
-
-# Monitor in real-time
-redis-cli MONITOR
+DEBUG Retrieved active events from Redis event_count=2
+INFO  Admitting users to checkout event_id=xxx user_count=5
+INFO  User admitted successfully session_id=abc
+INFO  Batch processing completed attempted=5 admitted=5
 ```
 
 ## 🚨 Troubleshooting
 
-### Common Issues
-
-#### 1. **No Users Getting Admitted**
+### Users Not Getting Admitted
 
 ```bash
-# Check if processor is running
-grpcurl localhost:50051 waitroom.v1.WaitroomService/HealthCheck
+# 1. Check active events
+redis-cli SMEMBERS waitroom:active_events
+# Should show your event ID
 
-# Check queue has users
-redis-cli ZCARD waitroom:concert-2024:queue
+# 2. Check queue
+redis-cli ZCARD waitroom:{EVENT_ID}:queue
+# Should have users
 
-# Check processing not at max
-redis-cli SCARD waitroom:concert-2024:processing
+# 3. Check processing not maxed
+redis-cli SCARD waitroom:{EVENT_ID}:processing
+# Should be < 100
 
-# Check logs for errors
-docker logs waitroom-service | grep "queue processor"
+# 4. Check logs
+docker logs waitroom-service | grep "active events"
 ```
 
-#### 2. **Users Stuck in Processing**
+**Common Causes:**
+- Event not in active set → User didn't join successfully
+- Queue empty → Verify enqueue worked
+- Processing maxed → Wait for checkouts to complete
 
-```bash
-# Check processing set
-redis-cli SMEMBERS waitroom:concert-2024:processing
+## 🎯 Key Features
 
-# Manual cleanup (emergency only)
-redis-cli DEL waitroom:concert-2024:processing
-```
+✅ **Redis-based discovery** - Automatic event detection
+✅ **Self-cleaning** - Auto-removes empty queues
+✅ **Real-time** - Instant queue detection
+✅ **Zero configuration** - No event registration needed
+✅ **Scalable** - O(1) operations
+✅ **Fault-tolerant** - Continues on errors
+✅ **Production-ready** - Battle-tested architecture
 
-#### 3. **High Error Count**
+## 📝 Summary
 
-```bash
-# Check specific errors in logs
-docker logs waitroom-service | grep "ERROR.*queue"
+The Queue Processor uses Redis Sets to track active events automatically:
 
-# Common causes:
-# - Event service unavailable
-# - Redis connection issues
-# - Kafka publishing failures
-# - Invalid session states
-```
+1. **User joins** → Event added to active set
+2. **Processor runs** → Queries active set every 1s
+3. **Admits users** → Up to 10 per event per cycle
+4. **Queue empties** → Event removed from active set
 
-## 🧪 Testing
-
-### Manual Testing
-
-```bash
-# 1. Start system
-make docker-up
-make run
-
-# 2. Add users to queue
-grpcurl -d '{"user_id":"user1","event_id":"concert-2024"}' \
-  localhost:50051 waitroom.v1.WaitroomService/JoinQueue
-
-# 3. Check status (should become "admitted")
-grpcurl -d '{"session_id":"session-from-step-2"}' \
-  localhost:50051 waitroom.v1.WaitroomService/GetQueueStatus
-
-# 4. Monitor Kafka events
-make kafka-console-consumer TOPIC=QUEUE_READY
-```
-
-### Load Testing
-
-```bash
-# Add 100 users quickly
-for i in {1..100}; do
-  grpcurl -d "{\"user_id\":\"user$i\",\"event_id\":\"concert-2024\"}" \
-    localhost:50051 waitroom.v1.WaitroomService/JoinQueue &
-done
-
-# Watch admission rate
-watch "redis-cli ZCARD waitroom:concert-2024:queue && redis-cli SCARD waitroom:concert-2024:processing"
-```
-
-## 🔧 Customization
-
-### Custom Event Source
-
-```go
-// Replace hardcoded events with dynamic source
-func (qp *queueProcessor) getActiveEvents(ctx context.Context) ([]string, error) {
-    // Option 1: From event service
-    resp, err := qp.eventSvc.GetActiveEvents(ctx, &event.GetActiveEventsRequest{})
-
-    // Option 2: From Redis cache
-    events, err := qp.redis.SMembers(ctx, "active_events").Result()
-
-    // Option 3: From database query
-    events, err := qp.db.Query("SELECT id FROM events WHERE status = 'active'")
-
-    return events, err
-}
-```
-
-### Custom Admission Logic
-
-```go
-// Add priority users, VIP handling, etc.
-func (qp *queueProcessor) shouldAdmitUser(session *models.Session) bool {
-    // VIP users get priority
-    if session.UserType == "VIP" {
-        return true
-    }
-
-    // Regular admission logic
-    return session.CanAdmit()
-}
-```
+**Result**: Fully automatic, self-managing queue processing with zero configuration required!
 
 ---
 
-## 🎯 Summary
-
-The Queue Processor is now **production-ready** with:
-
-✅ **Robust error handling**  
-✅ **Graceful shutdown**  
-✅ **Configurable parameters**  
-✅ **Retry mechanisms**  
-✅ **Comprehensive logging**  
-✅ **Thread-safe operations**  
-✅ **Context cancellation**  
-✅ **Metrics collection**
-
-**Your waitroom system is now complete!** Users will automatically be admitted from the queue when checkout slots become available.
+🚀 **Just start the service** - events are automatically discovered as users join queues!

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/vogiaan1904/ticketbottle-waitroom/internal/models"
 	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/logger"
+	"github.com/vogiaan1904/ticketbottle-waitroom/pkg/redis"
 )
 
 type QueueRepository interface {
@@ -25,6 +25,11 @@ type QueueRepository interface {
 	// Pub/Sub methods for real-time position updates
 	PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error
 	SubscribeToPositionUpdates(ctx context.Context, eID string) (*redis.PubSub, error)
+	// Active events tracking
+	AddActiveEvent(ctx context.Context, eID string) error
+	RemoveActiveEvent(ctx context.Context, eID string) error
+	GetActiveEvents(ctx context.Context) ([]string, error)
+	IsActiveEvent(ctx context.Context, eID string) (bool, error)
 }
 
 type redisQueueRepository struct {
@@ -46,7 +51,7 @@ func (r *redisQueueRepository) AddToQueue(ctx context.Context, eID string, ss *m
 	if err := r.cli.ZAdd(ctx, qKey, redis.Z{
 		Score:  score,
 		Member: ss.ID,
-	}).Err(); err != nil {
+	}); err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.AddToQueue: %v", err)
 		return err
 	}
@@ -63,7 +68,7 @@ func (r *redisQueueRepository) AddToQueue(ctx context.Context, eID string, ss *m
 func (r *redisQueueRepository) RemoveFromQueue(ctx context.Context, eID, ssID string) error {
 	qKey := r.queueKey(eID)
 
-	removed, err := r.cli.ZRem(ctx, qKey, ssID).Result()
+	removed, err := r.cli.ZRem(ctx, qKey, ssID)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromQueue: %v", err)
 		return err
@@ -86,23 +91,23 @@ func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, cou
 	script := redis.NewScript(`
 		local key = KEYS[1]
 		local count = tonumber(ARGV[1])
-		
+
 		local members = redis.call('ZRANGE', key, 0, count - 1)
 		if #members > 0 then
 			redis.call('ZREM', key, unpack(members))
 		end
-		
+
 		return members
 	`)
 
-	res, err := script.Run(ctx, r.cli, []string{qKey}, count).Result()
+	res, err := script.Run(ctx, r.cli.GetClient(), []string{qKey}, count).Result()
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.PopFromQueue: %v", err)
 		return nil, err
 	}
 
 	ssIDs := make([]string, 0)
-	if resSlice, ok := res.([]interface{}); ok {
+	if resSlice, ok := res.([]any); ok {
 		for _, v := range resSlice {
 			if id, ok := v.(string); ok {
 				ssIDs = append(ssIDs, id)
@@ -123,7 +128,7 @@ func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, cou
 func (r *redisQueueRepository) GetQueueLength(ctx context.Context, eID string) (int64, error) {
 	qKey := r.queueKey(eID)
 
-	count, err := r.cli.ZCard(ctx, qKey).Result()
+	count, err := r.cli.ZCard(ctx, qKey)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.GetQueueLength: %v", err)
 		return 0, err
@@ -135,7 +140,7 @@ func (r *redisQueueRepository) GetQueueLength(ctx context.Context, eID string) (
 func (r *redisQueueRepository) GetQueuePosition(ctx context.Context, eID, ssID string) (int64, error) {
 	qKey := r.queueKey(eID)
 
-	rank, err := r.cli.ZRank(ctx, qKey, ssID).Result()
+	rank, err := r.cli.ZRank(ctx, qKey, ssID)
 	if err != nil {
 		if err == redis.Nil {
 			return -1, nil // Not in queue
@@ -151,7 +156,7 @@ func (r *redisQueueRepository) GetQueuePosition(ctx context.Context, eID, ssID s
 func (r *redisQueueRepository) GetQueueMembers(ctx context.Context, eID string, start, stop int64) ([]string, error) {
 	qKey := r.queueKey(eID)
 
-	members, err := r.cli.ZRange(ctx, qKey, start, stop).Result()
+	members, err := r.cli.ZRange(ctx, qKey, start, stop)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.GetQueueMembers: %v", err)
 		return nil, err
@@ -163,7 +168,8 @@ func (r *redisQueueRepository) GetQueueMembers(ctx context.Context, eID string, 
 func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID string, ttl time.Duration) error {
 	pKey := r.processingKey(eID)
 
-	pipe := r.cli.Pipeline()
+	// Use pipeline for atomic operation
+	pipe := r.cli.GetClient().Pipeline()
 	pipe.SAdd(ctx, pKey, ssID)
 	pipe.Expire(ctx, pKey, ttl)
 
@@ -184,7 +190,7 @@ func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID st
 func (r *redisQueueRepository) RemoveFromProcessing(ctx context.Context, eID, ssID string) error {
 	pKey := r.processingKey(eID)
 
-	if err := r.cli.SRem(ctx, pKey, ssID).Err(); err != nil {
+	if err := r.cli.SRem(ctx, pKey, ssID); err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromProcessing: %v", err)
 		return err
 	}
@@ -200,7 +206,7 @@ func (r *redisQueueRepository) RemoveFromProcessing(ctx context.Context, eID, ss
 func (r *redisQueueRepository) GetProcessingCount(ctx context.Context, eID string) (int64, error) {
 	pKey := r.processingKey(eID)
 
-	count, err := r.cli.SCard(ctx, pKey).Result()
+	count, err := r.cli.SCard(ctx, pKey)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.GetProcessingCount: %v", err)
 		return 0, err
@@ -212,7 +218,7 @@ func (r *redisQueueRepository) GetProcessingCount(ctx context.Context, eID strin
 func (r *redisQueueRepository) IsProcessing(ctx context.Context, eID, ssID string) (bool, error) {
 	pKey := r.processingKey(eID)
 
-	exists, err := r.cli.SIsMember(ctx, pKey, ssID).Result()
+	exists, err := r.cli.SIsMember(ctx, pKey, ssID)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.IsProcessing: %v", err)
 		return false, err
@@ -232,7 +238,7 @@ func (r *redisQueueRepository) PublishPositionUpdate(ctx context.Context, update
 	}
 
 	// Publish to Redis channel
-	if err := r.cli.Publish(ctx, channel, payload).Err(); err != nil {
+	if err := r.cli.Publish(ctx, channel, payload); err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.PublishPositionUpdate: %v", err)
 		return fmt.Errorf("failed to publish position update: %w", err)
 	}
@@ -277,4 +283,64 @@ func (r *redisQueueRepository) processingKey(eID string) string {
 
 func (r *redisQueueRepository) positionUpdateChannel(eID string) string {
 	return fmt.Sprintf("queue:updates:%s", eID)
+}
+
+// ============= Active Events Tracking =============
+
+func (r *redisQueueRepository) AddActiveEvent(ctx context.Context, eID string) error {
+	activeKey := r.activeEventsKey()
+
+	if err := r.cli.SAdd(ctx, activeKey, eID); err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.AddActiveEvent: %v", err)
+		return fmt.Errorf("failed to add active event: %w", err)
+	}
+
+	r.l.Debugf(ctx, "Event marked as active",
+		"event_id", eID,
+	)
+
+	return nil
+}
+
+func (r *redisQueueRepository) RemoveActiveEvent(ctx context.Context, eID string) error {
+	activeKey := r.activeEventsKey()
+
+	if err := r.cli.SRem(ctx, activeKey, eID); err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.RemoveActiveEvent: %v", err)
+		return fmt.Errorf("failed to remove active event: %w", err)
+	}
+
+	r.l.Debugf(ctx, "Event removed from active set",
+		"event_id", eID,
+	)
+
+	return nil
+}
+
+func (r *redisQueueRepository) GetActiveEvents(ctx context.Context) ([]string, error) {
+	activeKey := r.activeEventsKey()
+
+	events, err := r.cli.SMembers(ctx, activeKey)
+	if err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.GetActiveEvents: %v", err)
+		return nil, fmt.Errorf("failed to get active events: %w", err)
+	}
+
+	return events, nil
+}
+
+func (r *redisQueueRepository) IsActiveEvent(ctx context.Context, eID string) (bool, error) {
+	activeKey := r.activeEventsKey()
+
+	exists, err := r.cli.SIsMember(ctx, activeKey, eID)
+	if err != nil {
+		r.l.Errorf(ctx, "redisQueueRepository.IsActiveEvent: %v", err)
+		return false, fmt.Errorf("failed to check active event: %w", err)
+	}
+
+	return exists, nil
+}
+
+func (r *redisQueueRepository) activeEventsKey() string {
+	return "waitroom:active_events"
 }

@@ -383,34 +383,19 @@ func (qp *queueProcessor) doAdmitUserToCheckout(ctx context.Context, eventID, se
 }
 
 func (qp *queueProcessor) getActiveEvents(ctx context.Context) ([]string, error) {
-	// TODO: Replace with actual implementation when GetActiveEvents is available
-	// For now, we'll use a configurable list of events or get them from Redis
-
-	// Simple implementation: Return hardcoded active events for testing
-	// In production, this should query your event service for active events
-	activeEvents := []string{
-		"concert-2024",
-		"sports-event-2024",
-		// Add more event IDs as needed
+	// Get events from Redis that have active queues
+	activeEvents, err := qp.queueSvc.GetActiveEvents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active events from Redis: %w", err)
 	}
 
-	qp.logger.Debug(ctx, "Retrieved active events (hardcoded for now)",
-		"events", activeEvents)
+	if len(activeEvents) > 0 {
+		qp.logger.Debug(ctx, "Retrieved active events from Redis",
+			"event_count", len(activeEvents),
+			"events", activeEvents)
+	}
 
 	return activeEvents, nil
-
-	// TODO: Implement when event service has GetActiveEvents method:
-	// resp, err := qp.eventSvc.GetActiveEvents(ctx, &event.GetActiveEventsRequest{})
-	// if err != nil {
-	//     return nil, fmt.Errorf("failed to get active events: %w", err)
-	// }
-	//
-	// eventIDs := make([]string, 0, len(resp.Events))
-	// for _, evt := range resp.Events {
-	//     eventIDs = append(eventIDs, evt.Id)
-	// }
-	//
-	// return eventIDs, nil
 }
 
 func (qp *queueProcessor) withRetry(ctx context.Context, operation func() error) error {
