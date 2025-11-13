@@ -60,12 +60,6 @@ func (r *redisSessionRepository) Create(ctx context.Context, ss *models.Session)
 		return err
 	}
 
-	r.l.Debugf(ctx, "Session created",
-		"session_id", ss.ID,
-		"user_id", ss.UserID,
-		"event_id", ss.EventID,
-	)
-
 	return nil
 }
 
@@ -112,11 +106,6 @@ func (r *redisSessionRepository) Update(ctx context.Context, ssID string, ss *mo
 		r.l.Errorf(ctx, "redisSessionRepository.Update: %v", err)
 		return err
 	}
-
-	r.l.Debugf(ctx, "Session updated with explicit ID",
-		"expected_session_id", ssID,
-		"actual_session_id", ss.ID,
-	)
 
 	return nil
 }
@@ -186,8 +175,6 @@ func (r *redisSessionRepository) Delete(ctx context.Context, ssID string) error 
 		return err
 	}
 
-	r.l.Debugf(ctx, "Session deleted", "session_id", ssID)
-
 	return nil
 }
 
@@ -226,32 +213,26 @@ func (r *redisSessionRepository) tokenBlacklistKey(tokenHash string) string {
 	return fmt.Sprintf("waitroom:token:blacklist:%s", tokenHash)
 }
 
-// hashToken creates a SHA256 hash of the token for use as Redis key
 func (r *redisSessionRepository) hashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(hash[:])
 }
 
-// InvalidateToken adds the checkout token to a blacklist and updates session
 func (r *redisSessionRepository) InvalidateToken(ctx context.Context, ssID string, reason string) error {
-	// Get the session to retrieve the token
 	ss, err := r.Get(ctx, ssID)
 	if err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.InvalidateToken.Get: %v", err)
 		return err
 	}
 
-	// If no token exists, nothing to invalidate
 	if ss.CheckoutToken == "" {
 		r.l.Debugf(ctx, "No token to invalidate", "session_id", ssID)
 		return nil
 	}
 
-	// Hash the token for blacklist key
 	tokenHash := r.hashToken(ss.CheckoutToken)
 	blacklistKey := r.tokenBlacklistKey(tokenHash)
 
-	// Calculate TTL based on token expiration (default 15 minutes if not set)
 	ttl := 15 * time.Minute
 	if ss.CheckoutExpiresAt != nil {
 		remaining := time.Until(*ss.CheckoutExpiresAt)
@@ -260,10 +241,8 @@ func (r *redisSessionRepository) InvalidateToken(ctx context.Context, ssID strin
 		}
 	}
 
-	// Use pipeline for atomic operation
 	pipe := r.cli.GetClient().Pipeline()
 
-	// Add token hash to blacklist with TTL
 	invalidationData := map[string]interface{}{
 		"session_id":     ssID,
 		"reason":         reason,
@@ -272,7 +251,6 @@ func (r *redisSessionRepository) InvalidateToken(ctx context.Context, ssID strin
 	data, _ := json.Marshal(invalidationData)
 	pipe.Set(ctx, blacklistKey, data, ttl)
 
-	// Update session with invalidation info
 	now := time.Now()
 	ss.TokenInvalidated = true
 	ss.TokenInvalidatedAt = &now
@@ -285,7 +263,6 @@ func (r *redisSessionRepository) InvalidateToken(ctx context.Context, ssID strin
 		return err
 	}
 
-	// Get current TTL to preserve it
 	sessionTTL, _ := r.cli.TTL(ctx, r.sessionKey(ssID))
 	if sessionTTL <= 0 {
 		sessionTTL = 2 * time.Hour
@@ -293,22 +270,14 @@ func (r *redisSessionRepository) InvalidateToken(ctx context.Context, ssID strin
 
 	pipe.Set(ctx, r.sessionKey(ssID), sessionData, sessionTTL)
 
-	// Execute pipeline
 	if _, err := pipe.Exec(ctx); err != nil {
 		r.l.Errorf(ctx, "redisSessionRepository.InvalidateToken.Exec: %v", err)
 		return err
 	}
 
-	r.l.Infof(ctx, "Token invalidated",
-		"session_id", ssID,
-		"reason", reason,
-		"ttl", ttl,
-	)
-
 	return nil
 }
 
-// IsTokenInvalidated checks if a token exists in the blacklist
 func (r *redisSessionRepository) IsTokenInvalidated(ctx context.Context, token string) (bool, error) {
 	if token == "" {
 		return false, fmt.Errorf("token cannot be empty")

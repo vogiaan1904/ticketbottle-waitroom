@@ -56,29 +56,16 @@ func (r *redisQueueRepository) AddToQueue(ctx context.Context, eID string, ss *m
 		return err
 	}
 
-	r.l.Debugf(ctx, "Added to queue",
-		"event_id", eID,
-		"session_id", ss.ID,
-		"score", score,
-	)
-
 	return nil
 }
 
 func (r *redisQueueRepository) RemoveFromQueue(ctx context.Context, eID, ssID string) error {
 	qKey := r.queueKey(eID)
 
-	removed, err := r.cli.ZRem(ctx, qKey, ssID)
+	_, err := r.cli.ZRem(ctx, qKey, ssID)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromQueue: %v", err)
 		return err
-	}
-
-	if removed > 0 {
-		r.l.Debugf(ctx, "Removed from queue",
-			"event_id", eID,
-			"session_id", ssID,
-		)
 	}
 
 	return nil
@@ -87,7 +74,7 @@ func (r *redisQueueRepository) RemoveFromQueue(ctx context.Context, eID, ssID st
 func (r *redisQueueRepository) PopFromQueue(ctx context.Context, eID string, count int) ([]string, error) {
 	qKey := r.queueKey(eID)
 
-	// Use Lua script for atomic pop operation
+	// Lua script for atomic pop operation
 	script := redis.NewScript(`
 		local key = KEYS[1]
 		local count = tonumber(ARGV[1])
@@ -143,32 +130,31 @@ func (r *redisQueueRepository) GetQueuePosition(ctx context.Context, eID, ssID s
 	rank, err := r.cli.ZRank(ctx, qKey, ssID)
 	if err != nil {
 		if err == redis.Nil {
-			return -1, nil // Not in queue
+			return -1, nil
 		}
 
 		r.l.Errorf(ctx, "redisQueueRepository.GetQueuePosition: %v", err)
 		return 0, err
 	}
 
-	return rank + 1, nil // Convert to 1-indexed position
+	return rank + 1, nil
 }
 
 func (r *redisQueueRepository) GetQueueMembers(ctx context.Context, eID string, start, stop int64) ([]string, error) {
 	qKey := r.queueKey(eID)
 
-	members, err := r.cli.ZRange(ctx, qKey, start, stop)
+	mems, err := r.cli.ZRange(ctx, qKey, start, stop)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.GetQueueMembers: %v", err)
 		return nil, err
 	}
 
-	return members, nil
+	return mems, nil
 }
 
 func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID string, ttl time.Duration) error {
 	pKey := r.processingKey(eID)
 
-	// Use pipeline for atomic operation
 	pipe := r.cli.GetClient().Pipeline()
 	pipe.SAdd(ctx, pKey, ssID)
 	pipe.Expire(ctx, pKey, ttl)
@@ -177,12 +163,6 @@ func (r *redisQueueRepository) AddToProcessing(ctx context.Context, eID, ssID st
 		r.l.Errorf(ctx, "redisQueueRepository.AddToProcessing: %v", err)
 		return err
 	}
-
-	r.l.Debugf(ctx, "Added to processing",
-		"event_id", eID,
-		"session_id", ssID,
-		"ttl", ttl,
-	)
 
 	return nil
 }
@@ -194,11 +174,6 @@ func (r *redisQueueRepository) RemoveFromProcessing(ctx context.Context, eID, ss
 		r.l.Errorf(ctx, "redisQueueRepository.RemoveFromProcessing: %v", err)
 		return err
 	}
-
-	r.l.Debugf(ctx, "Removed from processing",
-		"event_id", eID,
-		"session_id", ssID,
-	)
 
 	return nil
 }
@@ -230,24 +205,16 @@ func (r *redisQueueRepository) IsProcessing(ctx context.Context, eID, ssID strin
 func (r *redisQueueRepository) PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error {
 	channel := r.positionUpdateChannel(update.EventID)
 
-	// Marshal the update event to JSON
 	payload, err := json.Marshal(update)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.PublishPositionUpdate: failed to marshal update: %v", err)
 		return fmt.Errorf("failed to marshal position update: %w", err)
 	}
 
-	// Publish to Redis channel
 	if err := r.cli.Publish(ctx, channel, payload); err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.PublishPositionUpdate: %v", err)
 		return fmt.Errorf("failed to publish position update: %w", err)
 	}
-
-	r.l.Debugf(ctx, "Published position update",
-		"event_id", update.EventID,
-		"update_type", update.UpdateType,
-		"channel", channel,
-	)
 
 	return nil
 }
@@ -255,20 +222,13 @@ func (r *redisQueueRepository) PublishPositionUpdate(ctx context.Context, update
 func (r *redisQueueRepository) SubscribeToPositionUpdates(ctx context.Context, eID string) (*redis.PubSub, error) {
 	channel := r.positionUpdateChannel(eID)
 
-	// Create a new pub/sub subscription
 	pubsub := r.cli.Subscribe(ctx, channel)
 
-	// Wait for confirmation that subscription is created
 	_, err := pubsub.Receive(ctx)
 	if err != nil {
 		r.l.Errorf(ctx, "redisQueueRepository.SubscribeToPositionUpdates: %v", err)
 		return nil, fmt.Errorf("failed to subscribe to position updates: %w", err)
 	}
-
-	r.l.Debugf(ctx, "Subscribed to position updates",
-		"event_id", eID,
-		"channel", channel,
-	)
 
 	return pubsub, nil
 }
@@ -295,10 +255,6 @@ func (r *redisQueueRepository) AddActiveEvent(ctx context.Context, eID string) e
 		return fmt.Errorf("failed to add active event: %w", err)
 	}
 
-	r.l.Debugf(ctx, "Event marked as active",
-		"event_id", eID,
-	)
-
 	return nil
 }
 
@@ -309,10 +265,6 @@ func (r *redisQueueRepository) RemoveActiveEvent(ctx context.Context, eID string
 		r.l.Errorf(ctx, "redisQueueRepository.RemoveActiveEvent: %v", err)
 		return fmt.Errorf("failed to remove active event: %w", err)
 	}
-
-	r.l.Debugf(ctx, "Event removed from active set",
-		"event_id", eID,
-	)
 
 	return nil
 }
