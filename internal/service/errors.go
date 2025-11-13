@@ -15,4 +15,13 @@ var (
 
 	ErrProcessorStopped = errors.New("queue processor has been stopped")
 	ErrEventNotActive   = errors.New("event is not active or not found")
+
+	ErrTokenEmpty               = errors.New("token cannot be empty")
+	ErrTokenInvalid             = errors.New("invalid token")
+	ErrTokenInvalidated         = errors.New("token has been invalidated")
+	ErrTokenExpired             = errors.New("checkout token has expired")
+	ErrTokenInvalidClaims       = errors.New("invalid token claims")
+	ErrTokenUnexpectedSignature = errors.New("unexpected token signing method")
+	ErrTokenNotValid            = errors.New("token is not valid")
+	ErrSessionNotAdmitted       = errors.New("session status must be admitted")
 )

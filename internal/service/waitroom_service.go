@@ -20,12 +20,10 @@ type WaitroomService interface {
 	HandleCheckoutFailed(ctx context.Context, in CheckoutFailedInput) error
 	HandleCheckoutExpired(ctx context.Context, in CheckoutExpiredInput) error
 
-	// Queue processor methods
 	StartQueueProcessor(ctx context.Context) error
 	StopQueueProcessor() error
 	GetProcessorStatus() ProcessorStatus
 
-	// Real-time position streaming
 	StreamSessionPosition(ctx context.Context, sessionID string, updates chan<- *PositionStreamUpdate) error
 }
 
@@ -182,17 +180,11 @@ func (s *waitroomService) LeaveQueue(ctx context.Context, ssID string) error {
 		Reason:    "user_left",
 		LeftAt:    ss.UpdatedAt,
 	}); err != nil {
-		s.l.Error(ctx, "Failed to publish queue left event",
-			"session_id", ssID,
-			"error", err,
-		)
+		s.l.Errorf(ctx, "Failed to publish queue left event - session_id: %s, error: %v", ssID, err)
 	}
 
-	s.l.Info(ctx, "User left queue",
-		"session_id", ssID,
-		"user_id", ss.UserID,
-		"event_id", ss.EventID,
-	)
+	s.l.Infof(ctx, "User left queue - session_id: %s, user_id: %s, event_id: %s",
+		ssID, ss.UserID, ss.EventID)
 
 	return nil
 }
@@ -209,11 +201,14 @@ func (s *waitroomService) HandleCheckoutCompleted(ctx context.Context, in Checko
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
+	if err := s.ssSvc.InvalidateCheckoutToken(ctx, in.SessionID, "completed"); err != nil {
+		s.l.Errorf(ctx, "Failed to invalidate checkout token - session_id: %s, error: %v",
+			in.SessionID, err)
+	}
+
 	if err := s.qSvc.RemoveFromProcessing(ctx, in.EventID, in.SessionID); err != nil {
-		s.l.Errorf(ctx, "Failed to remove from processing",
-			"session_id", in.SessionID,
-			"error", err,
-		)
+		s.l.Errorf(ctx, "Failed to remove from processing - session_id: %s, error: %v",
+			in.SessionID, err)
 	}
 
 	ss.Status = models.SessionStatusCompleted
@@ -221,12 +216,10 @@ func (s *waitroomService) HandleCheckoutCompleted(ctx context.Context, in Checko
 	ss.CompletedAt = &now
 
 	if err := s.ssSvc.UpdateSession(ctx, ss); err != nil {
-		return fmt.Errorf("failed to update session: %w", err)
+		s.l.Errorf(ctx, "Failed to update session - session_id: %s, error: %v",
+			in.SessionID, err)
+		return err
 	}
-
-	s.l.Info(ctx, "Checkout completed event processed",
-		"session_id", in.SessionID,
-	)
 
 	return nil
 }
@@ -235,29 +228,28 @@ func (s *waitroomService) HandleCheckoutFailed(ctx context.Context, in CheckoutF
 	ss, err := s.ssSvc.GetSession(ctx, in.SessionID)
 	if err != nil {
 		if err == ErrSessionNotFound {
-			s.l.Warnf(ctx, "Session not found for failed checkout",
-				"session_id", in.SessionID,
-			)
+			s.l.Warnf(ctx, "Session not found for failed checkout - session_id: %s", in.SessionID)
 			return nil
 		}
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
+	if err := s.ssSvc.InvalidateCheckoutToken(ctx, in.SessionID, "failed"); err != nil {
+		s.l.Errorf(ctx, "Failed to invalidate checkout token - session_id: %s, error: %v",
+			in.SessionID, err)
+	}
+
 	if err := s.qSvc.RemoveFromProcessing(ctx, in.EventID, in.SessionID); err != nil {
-		s.l.Errorf(ctx, "Failed to remove from processing",
-			"session_id", in.SessionID,
-			"error", err,
-		)
+		s.l.Errorf(ctx, "Failed to remove from processing - session_id: %s, error: %v",
+			in.SessionID, err)
 	}
 
 	ss.Status = models.SessionStatusFailed
 	if err := s.ssSvc.UpdateSession(ctx, ss); err != nil {
-		return fmt.Errorf("failed to update session: %w", err)
+		s.l.Errorf(ctx, "Failed to update session - session_id: %s, error: %v",
+			in.SessionID, err)
+		return err
 	}
-
-	s.l.Info(ctx, "Checkout failed event processed",
-		"session_id", in.SessionID,
-	)
 
 	return nil
 }
@@ -266,29 +258,30 @@ func (s *waitroomService) HandleCheckoutExpired(ctx context.Context, in Checkout
 	ss, err := s.ssSvc.GetSession(ctx, in.SessionID)
 	if err != nil {
 		if err == ErrSessionNotFound {
-			s.l.Warnf(ctx, "Session not found for expired checkout",
-				"session_id", in.SessionID,
-			)
+			s.l.Warnf(ctx, "Session not found for expired checkout - session_id: %s", in.SessionID)
 			return nil
 		}
-		return fmt.Errorf("failed to get session: %w", err)
+		s.l.Errorf(ctx, "Failed to get session - session_id: %s, error: %v",
+			in.SessionID, err)
+		return err
+	}
+
+	if err := s.ssSvc.InvalidateCheckoutToken(ctx, in.SessionID, "expired"); err != nil {
+		s.l.Errorf(ctx, "Failed to invalidate checkout token - session_id: %s, error: %v",
+			in.SessionID, err)
 	}
 
 	if err := s.qSvc.RemoveFromProcessing(ctx, in.EventID, in.SessionID); err != nil {
-		s.l.Errorf(ctx, "Failed to remove from processing",
-			"session_id", in.SessionID,
-			"error", err,
-		)
+		s.l.Errorf(ctx, "Failed to remove from processing - session_id: %s, error: %v",
+			in.SessionID, err)
 	}
 
 	ss.Status = models.SessionStatusExpired
 	if err := s.ssSvc.UpdateSession(ctx, ss); err != nil {
-		return fmt.Errorf("failed to update session: %w", err)
+		s.l.Errorf(ctx, "Failed to update session - session_id: %s, error: %v",
+			in.SessionID, err)
+		return err
 	}
-
-	s.l.Info(ctx, "Checkout expired event processed",
-		"session_id", in.SessionID,
-	)
 
 	return nil
 }
@@ -332,34 +325,26 @@ func (s *waitroomService) StreamSessionPosition(ctx context.Context, ssID string
 
 	select {
 	case upds <- initUpd:
-		s.l.Debug(ctx, "Sent initial position update",
-			"session_id", ssID,
-			"position", initUpd.Position,
-		)
+		s.l.Debugf(ctx, "Sent initial position update - session_id: %s, position: %d",
+			ssID, initUpd.Position)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	// Subscribe to Redis Pub/Sub for position updates on this event
 	sub, err := s.qSvc.SubscribeToPositionUpdates(ctx, ss.EventID)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to position updates: %w", err)
 	}
 	defer sub.Close()
 
-	s.l.Info(ctx, "Started streaming position updates",
-		"session_id", ssID,
-		"event_id", ss.EventID,
-	)
+	s.l.Infof(ctx, "Started streaming position updates - session_id: %s, event_id: %s",
+		ssID, ss.EventID)
 
-	// Listen for updates on the channel
 	updCh := sub.Updates()
 	for {
 		select {
 		case <-ctx.Done():
-			s.l.Info(ctx, "Position stream closed by context",
-				"session_id", ssID,
-			)
+			s.l.Infof(ctx, "Position stream closed by context - session_id: %s", ssID)
 			return ctx.Err()
 
 		case event := <-updCh:
@@ -368,19 +353,15 @@ func (s *waitroomService) StreamSessionPosition(ctx context.Context, ssID string
 				return nil
 			}
 
-			s.l.Debug(ctx, "Received position update event",
-				"session_id", ssID,
-				"update_type", event.UpdateType,
-			)
+			s.l.Debugf(ctx, "Received position update event - session_id: %s, update_type: %s",
+				ssID, event.UpdateType)
 
-			// Get updated session data
 			ss, err = s.ssSvc.GetSession(ctx, ssID)
 			if err != nil {
 				s.l.Errorf(ctx, "Failed to get session during stream: %v", err)
 				continue
 			}
 
-			// Build and send position update
 			upd, err := s.buildPositionUpdate(ctx, ss)
 			if err != nil {
 				s.l.Errorf(ctx, "Failed to build position update: %v", err)
@@ -389,21 +370,15 @@ func (s *waitroomService) StreamSessionPosition(ctx context.Context, ssID string
 
 			select {
 			case upds <- upd:
-				s.l.Debug(ctx, "Sent position update",
-					"session_id", ssID,
-					"position", upd.Position,
-					"status", upd.Status,
-				)
+				s.l.Debugf(ctx, "Sent position update - session_id: %s, position: %d, status: %s",
+					ssID, upd.Position, upd.Status)
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 
-			// If session is admitted, completed, failed, or expired, close the stream
 			if ss.Status != models.SessionStatusQueued {
-				s.l.Info(ctx, "Session status changed, closing stream",
-					"session_id", ssID,
-					"status", ss.Status,
-				)
+				s.l.Infof(ctx, "Session status changed, closing stream - session_id: %s, status: %s",
+					ssID, ss.Status)
 				return nil
 			}
 		}
@@ -417,7 +392,6 @@ func (s *waitroomService) buildPositionUpdate(ctx context.Context, ss *models.Se
 		UpdatedAt: ss.UpdatedAt,
 	}
 
-	// If session is queued, get current position
 	if ss.Status == models.SessionStatusQueued {
 		status, err := s.qSvc.GetQueueStatus(ctx, ss.ID, ss)
 		if err != nil {
@@ -427,7 +401,6 @@ func (s *waitroomService) buildPositionUpdate(ctx context.Context, ss *models.Se
 		upd.QueueLength = status.QueueLength
 	}
 
-	// If session is admitted, include checkout information
 	if ss.Status == models.SessionStatusAdmitted {
 		upd.CheckoutToken = ss.CheckoutToken
 		upd.CheckoutURL = "/checkout" // This would be configurable

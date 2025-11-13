@@ -44,10 +44,10 @@ kafka-console-consumer: ## Start Kafka console consumer (usage: make kafka-conso
 	docker exec -it waitroom-kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic $(TOPIC) --from-beginning
 
 run: ## Run the application
-	go run cmd/server/main.go
+	go run cmd/api/main.go
 
 build: ## Build the application
-	go build -o bin/waitroom-service cmd/server/main.go
+	go build -o bin/waitroom-service cmd/api/main.go
 
 test: ## Run tests
 	go test -v -race -coverprofile=coverage.out ./...

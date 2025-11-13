@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Wait for Kafka to be ready
-echo "Waiting for Kafka to be ready..."
-sleep 10
-
 # Kafka broker address
 KAFKA_BROKER="localhost:9092"
 
@@ -26,7 +22,7 @@ for topic_config in "${TOPICS[@]}"; do
   
   echo "Creating topic: $topic (partitions: $partitions, replication: $replication)"
   
-  docker exec waitroom-kafka kafka-topics \
+  docker exec ticketbottle-kafka kafka-topics \
     --create \
     --if-not-exists \
     --bootstrap-server localhost:9092 \
@@ -37,7 +33,7 @@ done
 
 echo ""
 echo "Listing all topics:"
-docker exec waitroom-kafka kafka-topics \
+docker exec ticketbottle-kafka kafka-topics \
   --list \
   --bootstrap-server localhost:9092
 
@@ -47,7 +43,7 @@ for topic_config in "${TOPICS[@]}"; do
   IFS=':' read -r topic _ _ <<< "$topic_config"
   echo ""
   echo "Topic: $topic"
-  docker exec waitroom-kafka kafka-topics \
+  docker exec ticketbottle-kafka kafka-topics \
     --describe \
     --bootstrap-server localhost:9092 \
     --topic "$topic"

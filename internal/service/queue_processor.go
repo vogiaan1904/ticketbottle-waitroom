@@ -107,11 +107,8 @@ func (qp *queueProcessor) Start(ctx context.Context) error {
 		return errors.New("queue processor is already running")
 	}
 
-	qp.logger.Info(ctx, "Starting queue processor",
-		"interval", qp.config.ProcessInterval,
-		"max_concurrent_per_event", qp.config.MaxConcurrentPerEvent,
-		"batch_size", qp.config.BatchSize,
-	)
+	qp.logger.Infof(ctx, "Starting queue processor - interval: %v, max_concurrent: %d, batch_size: %d",
+		qp.config.ProcessInterval, qp.config.MaxConcurrentPerEvent, qp.config.BatchSize)
 
 	qp.isRunning = true
 	qp.startedAt = time.Now()
@@ -121,7 +118,7 @@ func (qp *queueProcessor) Start(ctx context.Context) error {
 	qp.wg.Add(1)
 	go qp.processLoop(ctx)
 
-	qp.logger.Info(ctx, "Queue processor started successfully")
+	qp.logger.Infof(ctx, "Queue processor started successfully")
 	return nil
 }
 
@@ -133,7 +130,7 @@ func (qp *queueProcessor) Stop() error {
 		return errors.New("queue processor is not running")
 	}
 
-	qp.logger.Info(context.Background(), "Stopping queue processor...")
+	qp.logger.Infof(context.Background(), "Stopping queue processor...")
 
 	// Signal stop
 	close(qp.stopCh)
@@ -152,9 +149,9 @@ func (qp *queueProcessor) Stop() error {
 
 	select {
 	case <-done:
-		qp.logger.Info(context.Background(), "Queue processor stopped gracefully")
+		qp.logger.Infof(context.Background(), "Queue processor stopped gracefully")
 	case <-time.After(qp.config.ShutdownTimeout):
-		qp.logger.Warn(context.Background(), "Queue processor shutdown timeout exceeded")
+		qp.logger.Warnf(context.Background(), "Queue processor shutdown timeout exceeded")
 	}
 
 	qp.isRunning = false
@@ -164,15 +161,15 @@ func (qp *queueProcessor) Stop() error {
 func (qp *queueProcessor) processLoop(ctx context.Context) {
 	defer qp.wg.Done()
 
-	qp.logger.Info(ctx, "Queue processor loop started")
+	qp.logger.Infof(ctx, "Queue processor loop started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			qp.logger.Info(ctx, "Queue processor stopped due to context cancellation")
+			qp.logger.Infof(ctx, "Queue processor stopped due to context cancellation")
 			return
 		case <-qp.stopCh:
-			qp.logger.Info(ctx, "Queue processor stopped due to stop signal")
+			qp.logger.Infof(ctx, "Queue processor stopped due to stop signal")
 			return
 		case <-qp.ticker.C:
 			qp.processAllQueues(ctx)
@@ -189,38 +186,28 @@ func (qp *queueProcessor) processAllQueues(ctx context.Context) {
 
 		duration := time.Since(startTime)
 		if duration > qp.config.MaxProcessingDuration {
-			qp.logger.Warn(ctx, "Queue processing took longer than expected",
-				"duration", duration,
-				"max_duration", qp.config.MaxProcessingDuration,
-			)
+			qp.logger.Warnf(ctx, "Queue processing took longer than expected - duration: %v, max: %v",
+				duration, qp.config.MaxProcessingDuration)
 		}
 	}()
 
-	// Get active events
 	activeEvents, err := qp.getActiveEvents(ctx)
 	if err != nil {
 		qp.incrementErrorCount()
-		qp.logger.Error(ctx, "Failed to get active events", "error", err)
+		qp.logger.Errorf(ctx, "Failed to get active events: %v", err)
 		return
 	}
 
 	if len(activeEvents) == 0 {
-		qp.logger.Debug(ctx, "No active events to process")
 		return
 	}
 
-	qp.logger.Debug(ctx, "Processing queues for active events",
-		"event_count", len(activeEvents))
+	qp.logger.Debugf(ctx, "Processing queues for active events, event_count: %d", len(activeEvents))
 
-	// Process each event's queue
 	for _, eventID := range activeEvents {
 		if err := qp.ProcessEventQueue(ctx, eventID); err != nil {
 			qp.incrementErrorCount()
-			qp.logger.Error(ctx, "Failed to process queue for event",
-				"event_id", eventID,
-				"error", err,
-			)
-			// Continue processing other events even if one fails
+			qp.logger.Errorf(ctx, "Failed to process queue for event: %v", err)
 		}
 	}
 }
@@ -229,60 +216,40 @@ func (qp *queueProcessor) ProcessEventQueue(ctx context.Context, eventID string)
 	processingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	// 1. Check current processing count
 	processingCount, err := qp.queueSvc.GetProcessingCount(processingCtx, eventID)
 	if err != nil {
 		return fmt.Errorf("failed to get processing count: %w", err)
 	}
 
-	// 2. Calculate available slots
 	availableSlots := int64(qp.config.MaxConcurrentPerEvent) - processingCount
 	if availableSlots <= 0 {
-		qp.logger.Debug(processingCtx, "No available slots for event",
-			"event_id", eventID,
-			"processing_count", processingCount,
-			"max_concurrent", qp.config.MaxConcurrentPerEvent,
-		)
+		qp.logger.Debugf(processingCtx, "No available slots for event, event_id: %s, processing_count: %d, max_concurrent: %d", eventID, processingCount, qp.config.MaxConcurrentPerEvent)
 		return nil
 	}
 
-	// 3. Determine batch size (min of available slots and configured batch size)
 	batchSize := min(availableSlots, int64(qp.config.BatchSize))
 
-	qp.logger.Debug(processingCtx, "Processing queue batch",
-		"event_id", eventID,
-		"available_slots", availableSlots,
-		"batch_size", batchSize,
-	)
-
-	// 4. Get users from queue
-	sessionIDs, err := qp.queueSvc.PopFromQueue(processingCtx, eventID, int(batchSize))
+	ssIDs, err := qp.queueSvc.PopFromQueue(processingCtx, eventID, int(batchSize))
 	if err != nil {
 		return fmt.Errorf("failed to pop from queue: %w", err)
 	}
 
-	if len(sessionIDs) == 0 {
-		qp.logger.Debug(processingCtx, "No sessions to process in queue", "event_id", eventID)
+	if len(ssIDs) == 0 {
+		qp.logger.Debugf(processingCtx, "No sessions to process in queue, event_id: %s", eventID)
 		return nil
 	}
 
-	qp.logger.Info(processingCtx, "Admitting users to checkout",
-		"event_id", eventID,
-		"user_count", len(sessionIDs),
-	)
+	qp.logger.Infof(processingCtx, "Starting batch admission, event_id: %s, session_count: %d", eventID, len(ssIDs))
 
-	// 5. Process each session
 	admittedCount := 0
-	for _, sessionID := range sessionIDs {
+	admittedSsIDs := make([]string, 0, len(ssIDs))
+
+	for _, sessionID := range ssIDs {
 		if err := qp.admitUserToCheckout(processingCtx, eventID, sessionID); err != nil {
-			qp.logger.Error(processingCtx, "Failed to admit user to checkout",
-				"event_id", eventID,
-				"session_id", sessionID,
-				"error", err,
-			)
-			// Continue with next user
+			qp.logger.Errorf(processingCtx, "Failed to admit user to checkout, event_id: %s, session_id: %s", eventID, sessionID)
 		} else {
 			admittedCount++
+			admittedSsIDs = append(admittedSsIDs, sessionID)
 		}
 	}
 
@@ -290,11 +257,20 @@ func (qp *queueProcessor) ProcessEventQueue(ctx context.Context, eventID string)
 	qp.totalAdmitted += int64(admittedCount)
 	qp.mu.Unlock()
 
-	qp.logger.Info(processingCtx, "Batch processing completed",
-		"event_id", eventID,
-		"attempted", len(sessionIDs),
-		"admitted", admittedCount,
-	)
+	if len(admittedSsIDs) > 0 {
+		if err := qp.queueSvc.PublishPositionUpdate(processingCtx, &models.PositionUpdateEvent{
+			EventID:            eventID,
+			UpdateType:         models.UpdateTypeUserAdmitted,
+			AffectedSessionIDs: admittedSsIDs,
+			Timestamp:          time.Now(),
+		}); err != nil {
+			qp.logger.Warnf(processingCtx, "Failed to publish position update after batch admission - event_id: %s, admitted_count: %d, error: %v",
+				eventID, len(admittedSsIDs), err)
+		}
+	}
+
+	qp.logger.Infof(processingCtx, "Batch processing completed - event_id: %s, attempted: %d, admitted: %d",
+		eventID, len(ssIDs), admittedCount)
 
 	return nil
 }
@@ -341,7 +317,7 @@ func (qp *queueProcessor) doAdmitUserToCheckout(ctx context.Context, eventID, se
 		return fmt.Errorf("failed to add to processing: %w", err)
 	}
 
-	// 7. Publish QUEUE_READY event
+	// 7. Publish QUEUE_READY event (for downstream services)
 	err = qp.producer.PublishQueueReady(ctx, kafka.QueueReadyEvent{
 		SessionID:     sessionID,
 		UserID:        session.UserID,
@@ -352,32 +328,15 @@ func (qp *queueProcessor) doAdmitUserToCheckout(ctx context.Context, eventID, se
 		Timestamp:     time.Now(),
 	})
 	if err != nil {
-		qp.logger.Error(ctx, "Failed to publish QUEUE_READY event",
-			"session_id", sessionID,
-			"error", err,
-		)
+		qp.logger.Errorf(ctx, "Failed to publish QUEUE_READY event - session_id: %s, error: %v",
+			sessionID, err)
 	}
 
-	// 8. Broadcast position update to notify all sessions in queue
-	if err := qp.queueSvc.PublishPositionUpdate(ctx, &models.PositionUpdateEvent{
-		EventID:            eventID,
-		UpdateType:         models.UpdateTypeUserAdmitted,
-		AffectedSessionIDs: []string{sessionID},
-		Timestamp:          time.Now(),
-	}); err != nil {
-		qp.logger.Warn(ctx, "Failed to publish position update after admission",
-			"session_id", sessionID,
-			"error", err,
-		)
-		// Don't fail the request if pub/sub fails
-	}
+	// NOTE: Position update broadcast moved to batch level in ProcessEventQueue
+	// to avoid race conditions where users see position -1 before status is updated
 
-	qp.logger.Info(ctx, "User admitted to checkout successfully",
-		"session_id", sessionID,
-		"user_id", session.UserID,
-		"event_id", eventID,
-		"checkout_expires_at", checkoutExpiresAt,
-	)
+	qp.logger.Infof(ctx, "User admitted to checkout successfully - session_id: %s, user_id: %s, event_id: %s, expires_at: %v",
+		sessionID, session.UserID, eventID, checkoutExpiresAt)
 
 	return nil
 }
@@ -390,9 +349,8 @@ func (qp *queueProcessor) getActiveEvents(ctx context.Context) ([]string, error)
 	}
 
 	if len(activeEvents) > 0 {
-		qp.logger.Debug(ctx, "Retrieved active events from Redis",
-			"event_count", len(activeEvents),
-			"events", activeEvents)
+		qp.logger.Debugf(ctx, "Retrieved active events from Redis - count: %d, events: %v",
+			len(activeEvents), activeEvents)
 	}
 
 	return activeEvents, nil
@@ -413,11 +371,8 @@ func (qp *queueProcessor) withRetry(ctx context.Context, operation func() error)
 
 		if err := operation(); err != nil {
 			lastErr = err
-			qp.logger.Warn(ctx, "Operation failed, retrying",
-				"attempt", attempt+1,
-				"max_attempts", qp.config.RetryAttempts,
-				"error", err,
-			)
+			qp.logger.Warnf(ctx, "Operation failed, retrying - attempt: %d/%d, error: %v",
+				attempt+1, qp.config.RetryAttempts, err)
 			continue
 		}
 

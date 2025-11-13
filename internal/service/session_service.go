@@ -22,8 +22,9 @@ type SessionService interface {
 	GetSession(ctx context.Context, ssID string) (*models.Session, error)
 	GenerateCheckoutToken(ctx context.Context, ss *models.Session) (string, error)
 	ValidateSession(ctx context.Context, ssID string) error
-	// New method for queue processor
 	UpdateCheckoutToken(ctx context.Context, sessionID string, token string, expAt time.Time) error
+	InvalidateCheckoutToken(ctx context.Context, sessionID string, reason string) error
+	ValidateCheckoutToken(ctx context.Context, token string) error
 }
 
 type sessionService struct {
@@ -65,16 +66,15 @@ func (s *sessionService) CreateSession(ctx context.Context, uID, eID string, use
 	}
 
 	if err := s.repo.Create(ctx, ss); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		s.l.Errorf(ctx, "Failed to save session to Redis: %v", err)
+		return nil, err
 	}
-
-	s.l.Infof(ctx, "Session created id: %s, user_id: %s, event_id: %s", ssID, uID, eID)
 
 	return ss, nil
 }
 
 func (s *sessionService) UpdateSession(ctx context.Context, ss *models.Session) error {
-	return s.repo.Update(ctx, ss)
+	return s.repo.Update(ctx, ss.ID, ss)
 }
 
 func (s *sessionService) UpdateSessionStatus(ctx context.Context, sessionID string, status models.SessionStatus) error {
@@ -120,11 +120,6 @@ func (s *sessionService) GenerateCheckoutToken(ctx context.Context, ss *models.S
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 
-	s.l.Debugf(ctx, "Generated checkout token",
-		"session_id", ss.ID,
-		"expires_at", expAt,
-	)
-
 	return tokenStr, nil
 }
 
@@ -149,5 +144,83 @@ func (s *sessionService) UpdateCheckoutToken(ctx context.Context, sessionID stri
 	if err := s.repo.UpdateCheckoutToken(ctx, sessionID, token, expAt); err != nil {
 		return fmt.Errorf("failed to update checkout token: %w", err)
 	}
+	return nil
+}
+
+func (s *sessionService) InvalidateCheckoutToken(ctx context.Context, sessionID string, reason string) error {
+	if err := s.repo.InvalidateToken(ctx, sessionID, reason); err != nil {
+		s.l.Errorf(ctx, "Failed to invalidate token - session_id: %s, error: %v", sessionID, err)
+		return fmt.Errorf("failed to invalidate checkout token: %w", err)
+	}
+
+	return nil
+}
+
+func (s *sessionService) ValidateCheckoutToken(ctx context.Context, token string) error {
+	if token == "" {
+		return ErrTokenEmpty
+	}
+
+	claims := jwt.MapClaims{}
+	parsedToken, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrTokenUnexpectedSignature
+		}
+		return []byte(s.conf.Secret), nil
+	})
+
+	if err != nil {
+		s.l.Warnf(ctx, "Invalid JWT token: %v", err)
+		return fmt.Errorf("%w: %v", ErrTokenInvalid, err)
+	}
+
+	if !parsedToken.Valid {
+		return ErrTokenNotValid
+	}
+
+	isBlacklisted, err := s.repo.IsTokenInvalidated(ctx, token)
+	if err != nil {
+		s.l.Errorf(ctx, "Failed to check token blacklist: %v", err)
+		return fmt.Errorf("failed to validate token: %w", err)
+	}
+
+	if isBlacklisted {
+		s.l.Warnf(ctx, "Token is blacklisted")
+		return ErrTokenInvalidated
+	}
+
+	sessionID, ok := claims["session_id"].(string)
+	if !ok {
+		return ErrTokenInvalidClaims
+	}
+
+	ss, err := s.repo.Get(ctx, sessionID)
+	if err != nil {
+		if err == redis.Nil {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	if ss.Status != models.SessionStatusAdmitted {
+		s.l.Warnf(ctx, "Session status not admitted - session_id: %s, status: %s", sessionID, ss.Status)
+		return ErrSessionNotAdmitted
+	}
+
+	if ss.TokenInvalidated {
+		s.l.Warnf(ctx, "Token marked as invalidated in session - session_id: %s, reason: %s",
+			sessionID, ss.TokenInvalidationReason)
+		return ErrTokenInvalidated
+	}
+
+	if ss.CheckoutExpiresAt != nil && time.Now().After(*ss.CheckoutExpiresAt) {
+		s.l.Warnf(ctx, "Checkout token expired - session_id: %s, expired_at: %v",
+			sessionID, ss.CheckoutExpiresAt)
+		return ErrTokenExpired
+	}
+
+	s.l.Debugf(ctx, "Checkout token validated successfully - session_id: %s, user_id: %s, event_id: %s",
+		sessionID, ss.UserID, ss.EventID)
+
 	return nil
 }

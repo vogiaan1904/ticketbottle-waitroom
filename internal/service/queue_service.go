@@ -19,11 +19,10 @@ type QueueService interface {
 	GetQueueInfo(ctx context.Context, eventID string) (*QueueInfoOutput, error)
 	RemoveFromProcessing(ctx context.Context, eventID, sessionID string) error
 	GetProcessingCount(ctx context.Context, eventID string) (int64, error)
-	// New methods for queue processor
 	PopFromQueue(ctx context.Context, eventID string, count int) ([]string, error)
 	AddToProcessing(ctx context.Context, eventID, sessionID string, ttl time.Duration) error
 	GetActiveEvents(ctx context.Context) ([]string, error)
-	// Position update broadcasting and streaming
+
 	PublishPositionUpdate(ctx context.Context, update *models.PositionUpdateEvent) error
 	SubscribeToPositionUpdates(ctx context.Context, eventID string) (PositionUpdateSubscription, error)
 }
@@ -60,10 +59,8 @@ func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (
 
 	ss.Position = pos
 
-	// Mark event as active (idempotent operation)
 	if err := s.repo.AddActiveEvent(ctx, ss.EventID); err != nil {
 		s.l.Warnf(ctx, "Failed to mark event as active: %v", err)
-		// Don't fail the enqueue operation
 	}
 
 	s.l.Infof(ctx, "Session enqueued - id: %s, event_id: %s, position: %d", ss.ID, ss.EventID, pos)
@@ -75,7 +72,7 @@ func (s *queueService) EnqueueSession(ctx context.Context, ss *models.Session) (
 		AffectedSessionIDs: []string{ss.ID},
 		Timestamp:          time.Now(),
 	}); err != nil {
-		s.l.Warnf(ctx, "Failed to publish position update after enqueue: %v", err)
+		s.l.Warnf(ctx, "Failed to publish position update after enqueue - session_id: %s, error: %v", ss.ID, err)
 	}
 
 	return pos, nil
@@ -92,11 +89,11 @@ func (s *queueService) DequeueSession(ctx context.Context, eventID, sessionID st
 	// Check if queue is now empty and remove from active events if so
 	queueLength, err := s.repo.GetQueueLength(ctx, eventID)
 	if err != nil {
-		s.l.Warnf(ctx, "Failed to check queue length after dequeue: %v", err)
+		s.l.Warnf(ctx, "Failed to check queue length after dequeue - event_id: %s, error: %v", eventID, err)
 	} else if queueLength == 0 {
 		// Queue is empty, remove from active events
 		if err := s.repo.RemoveActiveEvent(ctx, eventID); err != nil {
-			s.l.Warnf(ctx, "Failed to remove event from active set: %v", err)
+			s.l.Warnf(ctx, "Failed to remove event from active set - event_id: %s, error: %v", eventID, err)
 		} else {
 			s.l.Infof(ctx, "Event queue is empty, removed from active events - event_id: %s", eventID)
 		}
@@ -109,7 +106,7 @@ func (s *queueService) DequeueSession(ctx context.Context, eventID, sessionID st
 		AffectedSessionIDs: []string{sessionID},
 		Timestamp:          time.Now(),
 	}); err != nil {
-		s.l.Warnf(ctx, "Failed to publish position update after dequeue: %v", err)
+		s.l.Warnf(ctx, "Failed to publish position update after dequeue - session_id: %s, error: %v", sessionID, err)
 		// Don't fail the request if pub/sub fails
 	}
 
