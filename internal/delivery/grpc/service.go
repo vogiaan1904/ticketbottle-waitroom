@@ -52,6 +52,8 @@ func (s *grpcService) JoinQueue(ctx context.Context, req *waitroompb.JoinQueueRe
 func (s *grpcService) GetQueueStatus(ctx context.Context, req *waitroompb.GetQueueStatusRequest) (*waitroompb.QueueStatusResponse, error) {
 	out, err := s.svc.GetQueueStatus(ctx, req.SessionId)
 	if err != nil {
+		s.l.Errorf(ctx, "Failed to get queue status: %v", err)
+		err = s.mapGRPCError(err)
 		return nil, resp.ParseGRPCError(err)
 	}
 
